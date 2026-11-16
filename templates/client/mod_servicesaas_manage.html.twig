@@ -1,0 +1,65 @@
+{% if order.status == 'active' %}
+{% set saas = service|default(client.servicesaas_status({ 'order_id': order.id })) %}
+{% set return_info = client.servicesaas_return_url({ 'order_id': order.id }) %}
+
+<div class="card mb-4">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <div>
+            <h2 class="mb-0">{{ saas.app_name|default(order.title) }}</h2>
+            <span class="small text-secondary">{{ 'SaaS Subscription Entitlement'|trans }}</span>
+        </div>
+        {% if saas.provisioning_status == 'provisioned' %}
+            <span class="badge bg-success">{{ 'Provisioned'|trans }}</span>
+        {% elseif saas.provisioning_status == 'pending_claim' %}
+            <span class="badge bg-warning text-dark">{{ 'Pending Claim'|trans }}</span>
+        {% else %}
+            <span class="badge bg-secondary">{{ saas.provisioning_status }}</span>
+        {% endif %}
+    </div>
+    <div class="card-body">
+        {% if saas.provisioning_status == 'pending_claim' %}
+            <div class="alert alert-info mb-3" role="alert">
+                {{ 'Your subscription is ready to be claimed. Sign in or register in the app using %email% to activate your plan immediately.'|trans({ '%email%': saas.target_email }) }}
+            </div>
+        {% endif %}
+
+        <table class="table table-striped table-bordered table-sm mb-3">
+            <tbody>
+                <tr>
+                    <td>{{ 'Application'|trans }}</td>
+                    <td><strong>{{ saas.app_name|default(saas.app_id) }}</strong></td>
+                </tr>
+                <tr>
+                    <td>{{ 'Plan'|trans }}</td>
+                    <td><code>{{ saas.plan_id }}</code></td>
+                </tr>
+                <tr>
+                    <td>{{ 'Account Email'|trans }}</td>
+                    <td>{{ saas.target_email }}</td>
+                </tr>
+                {% if saas.external_user_id %}
+                <tr>
+                    <td>{{ 'Linked App Account'|trans }}</td>
+                    <td><code>{{ saas.external_user_id }}</code></td>
+                </tr>
+                {% endif %}
+                <tr>
+                    <td>{{ 'Last Synced'|trans }}</td>
+                    <td>{{ saas.last_sync_at|default('-') }}</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <div class="d-flex flex-wrap gap-2">
+            <a class="btn btn-outline-primary"
+               href="{{ 'servicesaas/sync_claim'|api_url(query: { 'order_id': order.id }) }}"
+               {{ fb_api_link({modal: {type: 'confirm', title: 'Sync entitlement with SaaS app?'|trans}, reload: true}) }}>
+                {{ 'Sync Claim Status'|trans }}
+            </a>
+            {% if return_info.url %}
+                <a class="btn btn-primary" href="{{ ('servicesaas/return/' ~ order.id)|url }}">{{ 'Return to App'|trans }}</a>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endif %}

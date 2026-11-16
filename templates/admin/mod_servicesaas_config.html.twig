@@ -1,0 +1,56 @@
+{% set config = product.config|default({}) %}
+{% set apps = admin.servicesaas_list_apps %}
+
+<div class="card-body">
+    <form method="post" action="{{ 'product/update_config'|api_url }}" {{ fb_api_form({message: 'SaaS Product Settings Updated'|trans}) }}>
+        <div class="mb-4">
+            <h3 class="card-title mb-1">{{ 'SaaS Provisioning Configuration'|trans }}</h3>
+            <p class="text-secondary mb-0">{{ 'Bind this product to a registered SaaS application, plan identifier, and optional plan quota metadata.'|trans }}</p>
+        </div>
+
+        <div class="row g-3 mb-4">
+            <div class="col-lg-6">
+                <label class="form-label required" for="saas-product-app-id">{{ 'SaaS Application'|trans }}</label>
+                {% if apps|length > 0 %}
+                    <select class="form-select" id="saas-product-app-id" name="config[app_id]">
+                        {% for app in apps %}
+                            <option value="{{ app.app_id }}"{% if config.app_id|default('default') == app.app_id %} selected{% endif %}>
+                                {{ app.name }} ({{ app.app_id }})
+                            </option>
+                        {% endfor %}
+                    </select>
+                {% else %}
+                    <input type="text" class="form-control" id="saas-product-app-id" name="config[app_id]" value="{{ config.app_id|default('default') }}" required>
+                {% endif %}
+                <div class="form-text">{{ 'Matches the app_id configured under Settings -> SaaS & App Provisioning.'|trans }}</div>
+            </div>
+
+            <div class="col-lg-6">
+                <label class="form-label required" for="saas-product-plan-id">{{ 'Remote Plan ID'|trans }}</label>
+                <input type="text" class="form-control" id="saas-product-plan-id" name="config[plan_id]" value="{{ config.plan_id|default('') }}" placeholder="ProPlan" required>
+                <div class="form-text">{{ 'Plan identifier expected by the target SaaS application (e.g. ProPlan, FamilyPlan).'|trans }}</div>
+            </div>
+
+            <div class="col-lg-6">
+                <label class="form-label" for="saas-storage-gb">{{ 'Storage Quota (GB)'|trans }}</label>
+                <input type="number" min="0" class="form-control" id="saas-storage-gb" name="config[plan_metadata][storage_gb]" value="{{ config.plan_metadata.storage_gb|default('') }}">
+            </div>
+
+            <div class="col-lg-6">
+                <label class="form-label" for="saas-seats">{{ 'Included Seats'|trans }}</label>
+                <input type="number" min="1" class="form-control" id="saas-seats" name="config[plan_metadata][seats]" value="{{ config.plan_metadata.seats|default('') }}">
+            </div>
+
+            <div class="col-12">
+                <label class="form-label" for="saas-metadata-json">{{ 'Additional Plan Metadata (JSON)'|trans }}</label>
+                <textarea class="form-control font-monospace" id="saas-metadata-json" name="config[plan_metadata_json]" rows="3" placeholder='{"tier":"pro","features":["sync","backup"]}'>{{ config.plan_metadata_json|default('') }}</textarea>
+                <div class="form-text">{{ 'Optional JSON payload forwarded encrypted inside ProvisioningPayload.plan_metadata.'|trans }}</div>
+            </div>
+        </div>
+
+        <input type="hidden" name="id" value="{{ product.id }}">
+        <div class="d-flex justify-content-end">
+            <button class="btn btn-primary" type="submit">{{ 'Update'|trans }}</button>
+        </div>
+    </form>
+</div>

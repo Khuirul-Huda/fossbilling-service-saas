@@ -1,0 +1,67 @@
+{% set saas = service|default(admin.servicesaas_status({ 'order_id': order.id })) %}
+
+<div class="card-body overflow-auto">
+    <div class="mb-3">
+        <h3 class="card-title mb-1">{{ 'SaaS Provisioning Details'|trans }}</h3>
+        <p class="text-secondary mb-0">{{ 'Encrypted entitlement state synchronized with the target SaaS application.'|trans }}</p>
+    </div>
+
+    <table class="table card-table table-vcenter table-striped text-nowrap">
+        <tbody>
+            <tr>
+                <td class="w-25 text-end">{{ 'Application'|trans }}:</td>
+                <td><strong>{{ saas.app_name|default(saas.app_id) }}</strong> <span class="text-secondary font-monospace">({{ saas.app_id }})</span></td>
+            </tr>
+            <tr>
+                <td class="text-end">{{ 'Plan ID'|trans }}:</td>
+                <td class="font-monospace">{{ saas.plan_id }}</td>
+            </tr>
+            <tr>
+                <td class="text-end">{{ 'Target Email'|trans }}:</td>
+                <td>{{ saas.target_email }}</td>
+            </tr>
+            <tr>
+                <td class="text-end">{{ 'External User ID'|trans }}:</td>
+                <td class="font-monospace">{{ saas.external_user_id|default('-') }}</td>
+            </tr>
+            <tr>
+                <td class="text-end">{{ 'Provisioning Status'|trans }}:</td>
+                <td>
+                    {% if saas.provisioning_status == 'provisioned' %}
+                        <span class="badge bg-success-lt">{{ 'Provisioned'|trans }}</span>
+                    {% elseif saas.provisioning_status == 'pending_claim' %}
+                        <span class="badge bg-warning-lt">{{ 'Pending Claim'|trans }}</span>
+                    {% elseif saas.provisioning_status == 'suspended' %}
+                        <span class="badge bg-secondary-lt">{{ 'Suspended'|trans }}</span>
+                    {% else %}
+                        <span class="badge bg-danger-lt">{{ saas.provisioning_status|default('unknown') }}</span>
+                    {% endif %}
+                </td>
+            </tr>
+            <tr>
+                <td class="text-end">{{ 'Last Synced'|trans }}:</td>
+                <td>{{ saas.last_sync_at|default('-') }}</td>
+            </tr>
+            <tr>
+                <td class="text-end">{{ 'Return Redirect URL'|trans }}:</td>
+                <td class="font-monospace small">{{ saas.return_redirect_url|default('-') }}</td>
+            </tr>
+            <tr>
+                <td class="text-end">{{ 'Plan Metadata'|trans }}:</td>
+                <td class="font-monospace small">{{ saas.plan_metadata|default({})|json_encode }}</td>
+            </tr>
+        </tbody>
+    </table>
+</div>
+
+<div class="card-footer d-flex flex-wrap gap-2 justify-content-end">
+    {{ order_actions|default('') }}
+    <a class="btn btn-primary"
+       href="{{ 'servicesaas/resync_order'|api_url(query: { 'order_id': order.id }) }}"
+       {{ fb_api_link({modal: {type: 'confirm', title: 'Resync provisioning with remote SaaS app?'|trans}, reload: true}) }}>
+        <svg class="icon">
+            <use href="#refresh" />
+        </svg>
+        <span>{{ 'Resync Provisioning'|trans }}</span>
+    </a>
+</div>

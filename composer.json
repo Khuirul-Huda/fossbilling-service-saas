@@ -1,0 +1,35 @@
+{
+  "name": "fossbilling/service-saas",
+  "description": "Encrypted multi-application SaaS provisioning module for FOSSBilling",
+  "type": "library",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/Khuirul-Huda/fossbilling-service-saas",
+  "require": {
+    "php": ">=8.3",
+    "ext-sodium": "*",
+    "ext-json": "*",
+    "doctrine/dbal": "^3.8 || ^4.0"
+  },
+  "require-dev": {
+    "pestphp/pest": "^3.0 || ^4.0"
+  },
+  "autoload": {
+    "psr-4": {
+      "Box\\Mod\\Servicesaas\\": "",
+      "Box\\Mod\\Servicesaas\\Crypto\\": "src/Crypto/",
+      "Box\\Mod\\Servicesaas\\Persistence\\": "src/Persistence/",
+      "Box\\Mod\\Servicesaas\\Client\\": "src/Client/",
+      "Box\\Mod\\Servicesaas\\Bridge\\": "src/Bridge/"
+    }
+  },
+  "autoload-dev": {
+    "psr-4": {
+      "Box\\Mod\\Servicesaas\\Tests\\": "tests/"
+    }
+  },
+  "config": {
+    "allow-plugins": {
+      "pestphp/pest-plugin": true
+    }
+  }
+}

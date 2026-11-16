@@ -1,0 +1,18 @@
+{{ product_details|default('') }}
+
+<div class="mt-3">
+    <h5 class="mb-2">{{ 'SaaS Account Details'|trans }}</h5>
+    <div class="mb-3">
+        <label class="form-label required" for="servicesaas-target-email">{{ 'App Account Email'|trans }}</label>
+        <input
+            type="email"
+            class="form-control"
+            id="servicesaas-target-email"
+            name="target_email"
+            value="{{ request.target_email|default(client.profile_get.email|default('')) }}"
+            placeholder="{{ 'you@example.com'|trans }}"
+            required
+        >
+        <div class="form-text">{{ 'Enter the email address you use (or will register with) in the target SaaS application.'|trans }}</div>
+    </div>
+</div>

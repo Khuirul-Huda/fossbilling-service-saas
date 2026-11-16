@@ -1,0 +1,11 @@
+{
+  "id": "servicesaas",
+  "type": "mod",
+  "name": "SaaS & App Provisioning",
+  "description": "Encrypted multi-application SaaS provisioning module for FOSSBilling",
+  "version": "1.0.0",
+  "minimum_fossbilling_version": "0.8.0",
+  "author": "Khuirul Huda",
+  "project_url": "https://github.com/Khuirul-Huda/fossbilling-service-saas",
+  "license": "Apache-2.0"
+}

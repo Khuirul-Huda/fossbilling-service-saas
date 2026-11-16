@@ -1,0 +1,140 @@
+{% extends request.ajax ? 'layout_blank.html.twig' : 'layout_default.html.twig' %}
+
+{% block meta_title %}{{ 'SaaS & App Provisioning'|trans }}{% endblock %}
+
+{% set active_menu = 'system' %}
+
+{% block breadcrumbs %}
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item">
+            <a href="{{ '/'|url }}">
+                <svg class="icon">
+                    <use href="#home" />
+                </svg>
+            </a>
+        </li>
+        <li class="breadcrumb-item">
+            <a href="{{ 'system'|url }}">{{ 'Settings'|trans }}</a>
+        </li>
+        <li class="breadcrumb-item active" aria-current="page">{{ 'SaaS & App Provisioning'|trans }}</li>
+    </ol>
+{% endblock %}
+
+{% block content %}
+{% set apps = admin.servicesaas_list_apps %}
+
+<div class="card mb-4">
+    <div class="card-header">
+        <div>
+            <h3 class="card-title">{{ 'Register or Update SaaS App'|trans }}</h3>
+            <p class="card-subtitle">{{ 'Configure encrypted provisioning endpoints, shared secrets, and allowed checkout return destinations.'|trans }}</p>
+        </div>
+    </div>
+    <div class="card-body">
+        <form method="post" action="{{ 'servicesaas/save_app'|api_url }}" id="servicesaas-app-form" {{ fb_api_form({reload: true, message: 'SaaS App Saved'|trans}) }}>
+            <div class="row g-3">
+                <div class="col-lg-4">
+                    <label class="form-label required" for="saas-app-id">{{ 'App ID'|trans }}</label>
+                    <input type="text" class="form-control" id="saas-app-id" name="app_id" placeholder="my-app" required>
+                    <div class="form-text">{{ 'Unique lowercase identifier used in encrypted envelopes (e.g. my-app).'|trans }}</div>
+                </div>
+                <div class="col-lg-4">
+                    <label class="form-label" for="saas-app-name">{{ 'Display Name'|trans }}</label>
+                    <input type="text" class="form-control" id="saas-app-name" name="name" placeholder="My SaaS App">
+                </div>
+                <div class="col-lg-4">
+                    <label class="form-label required" for="saas-base-url">{{ 'Base URL'|trans }}</label>
+                    <input type="url" class="form-control" id="saas-base-url" name="base_url" placeholder="https://api.example.com" required>
+                </div>
+                <div class="col-lg-4">
+                    <label class="form-label" for="saas-webhook-path">{{ 'Webhook Path'|trans }}</label>
+                    <input type="text" class="form-control" id="saas-webhook-path" name="webhook_path" value="/billing/notify/fossbilling">
+                </div>
+                <div class="col-lg-4">
+                    <label class="form-label" for="saas-shared-secret">{{ 'Shared Secret (32-byte base64 or 64-char hex)'|trans }}</label>
+                    <input type="password" class="form-control" id="saas-shared-secret" name="shared_secret" autocomplete="new-password" placeholder="{{ 'Leave blank when editing to keep existing secret'|trans }}">
+                </div>
+                <div class="col-lg-4">
+                    <label class="form-label" for="saas-allowed-hosts">{{ 'Allowed Redirect Hosts'|trans }}</label>
+                    <input type="text" class="form-control" id="saas-allowed-hosts" name="allowed_redirect_hosts" placeholder="app.example.com, example.com">
+                </div>
+                <div class="col-lg-4">
+                    <label class="form-label" for="saas-allowed-schemes">{{ 'Allowed Custom Schemes'|trans }}</label>
+                    <input type="text" class="form-control" id="saas-allowed-schemes" name="allowed_custom_schemes" placeholder="myapp">
+                </div>
+            </div>
+            <div class="d-flex justify-content-end gap-2 mt-4">
+                <button type="reset" class="btn btn-outline-secondary">{{ 'Reset'|trans }}</button>
+                <button type="submit" class="btn btn-primary">{{ 'Save App'|trans }}</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <div>
+            <h3 class="card-title">{{ 'Configured SaaS Apps'|trans }}</h3>
+            <p class="card-subtitle">{{ 'Each app uses its own XSalsa20-Poly1305 shared secret and redirect allowlist.'|trans }}</p>
+        </div>
+    </div>
+    <div class="table-responsive">
+        <table class="table card-table table-vcenter table-striped">
+            <thead>
+                <tr>
+                    <th>{{ 'App ID'|trans }}</th>
+                    <th>{{ 'Name'|trans }}</th>
+                    <th>{{ 'Webhook URL'|trans }}</th>
+                    <th>{{ 'Allowed Hosts'|trans }}</th>
+                    <th>{{ 'Schemes'|trans }}</th>
+                    <th class="w-1 text-end">{{ 'Actions'|trans }}</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for app in apps %}
+                    <tr>
+                        <td class="font-monospace">{{ app.app_id }}</td>
+                        <td>{{ app.name }}</td>
+                        <td class="font-monospace small">{{ app.webhook_url }}</td>
+                        <td class="small">{{ app.allowed_redirect_hosts|default('-') }}</td>
+                        <td class="small">{{ app.allowed_custom_schemes|default('-') }}</td>
+                        <td class="text-end text-nowrap">
+                            <button type="button"
+                                    class="btn btn-sm btn-outline-primary me-1 js-edit-saas-app"
+                                    data-app="{{ app|json_encode|e('html_attr') }}">
+                                {{ 'Edit'|trans }}
+                            </button>
+                            <a class="btn btn-sm btn-outline-danger"
+                               href="{{ 'servicesaas/save_app'|api_url(query: { 'delete_app_id': app.app_id }) }}"
+                               {{ fb_api_link({modal: {type: 'danger', title: 'Remove SaaS App?'|trans, button: 'Delete'|trans}, reload: true}) }}>
+                                {{ 'Delete'|trans }}
+                            </a>
+                        </td>
+                    </tr>
+                {% else %}
+                    <tr>
+                        <td colspan="6" class="text-secondary text-center py-4">{{ 'No SaaS applications configured yet.'|trans }}</td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    document.querySelectorAll('.js-edit-saas-app').forEach(function(button) {
+        button.addEventListener('click', function() {
+            const app = JSON.parse(button.getAttribute('data-app') || '{}');
+            document.getElementById('saas-app-id').value = app.app_id || '';
+            document.getElementById('saas-app-name').value = app.name || '';
+            document.getElementById('saas-base-url').value = app.base_url || '';
+            document.getElementById('saas-webhook-path').value = app.webhook_path || '/billing/notify/fossbilling';
+            document.getElementById('saas-shared-secret').value = '';
+            document.getElementById('saas-allowed-hosts').value = app.allowed_redirect_hosts || '';
+            document.getElementById('saas-allowed-schemes').value = app.allowed_custom_schemes || '';
+        });
+    });
+});
+</script>
+{% endblock %}
