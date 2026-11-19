@@ -10,6 +10,7 @@ use Box\Mod\Servicesaas\Bridge\CheckoutBridge;
 use Box\Mod\Servicesaas\Crypto\EncryptedChannel;
 use Box\Mod\Servicesaas\Persistence\ServiceSaasRecord;
 use Box\Mod\Servicesaas\Tests\Support\DoctrineBillingHarness;
+use Box\Mod\Servicesaas\Tests\Support\FakeTransportRecorder;
 use Box\Mod\Servicesaas\Tests\Support\SaasTestContext;
 
 it('creates client, order, invoice, and saas record on encrypted action=buy checkout', function (): void {
@@ -139,3 +140,57 @@ it('rejects untrusted redirect_url without creating client or order records', fu
     'javascript XSS scheme' => ['javascript:alert(1)'],
     'data XSS scheme' => ['data:text/html,<script>alert(1)</script>'],
 ]);
+
+it('defers plan mutation on provisioned action=update until upgrade invoice is paid and bills new plan price', function (): void {
+    $recorder = new FakeTransportRecorder(
+        SaasTestContext::TEST_SECRET,
+        static fn (array $payload): array => ['status' => 'provisioned', 'external_user_id' => '3003'],
+    );
+    $harness = new DoctrineBillingHarness('https://api.cloudapp.test', null, $recorder->asClosure());
+    $harness->seedSaasProduct('20gb_monthly_v4', 9900.0, '1M');
+    $harness->seedSaasProduct('100gb_monthly_v4', 29900.0, '1M');
+    $registry = SaasTestContext::createRegistry('https://api.cloudapp.test');
+    $bridge = (new CheckoutBridge(new EncryptedChannel(), $registry, $harness->saasRepo))->setDi($harness->di);
+
+    // 1. Initial buy
+    $buyEnvelope = SaasTestContext::seal('cloudapp', [
+        'app_id' => 'cloudapp',
+        'action' => 'buy',
+        'email' => 'upgrade@example.com',
+        'external_user_id' => '3003',
+        'plan_id' => '20gb_monthly_v4',
+        'redirect_url' => 'https://app.cloudapp.test/gallery',
+    ]);
+    $buyResp = SaasTestContext::open($bridge->handleEncryptedRequest($buyEnvelope));
+    $order = $harness->em->getRepository(Order::class)->find((int) $buyResp['order_id']);
+    $invoice = $harness->em->getRepository(\Box\Mod\Invoice\Entity\Invoice::class)->find((int) $order?->getUnpaidInvoiceId());
+    $harness->di['mod_service']('invoice')->payInvoiceWithCredits($invoice);
+
+    // 2. Request upgrade to 100gb_monthly_v4 (do not pay yet)
+    $updateEnvelope = SaasTestContext::seal('cloudapp', [
+        'app_id' => 'cloudapp',
+        'action' => 'update',
+        'email' => 'upgrade@example.com',
+        'external_user_id' => '3003',
+        'plan_id' => '100gb_monthly_v4',
+        'plan_metadata' => ['storage_bytes' => 107_374_182_400, 'period' => '1M'],
+        'redirect_url' => 'https://app.cloudapp.test/gallery',
+    ]);
+    $updateResp = SaasTestContext::open($bridge->handleEncryptedRequest($updateEnvelope));
+
+    $harness->em->clear();
+    $orderAfterUpdateReq = $harness->em->getRepository(Order::class)->find((int) $buyResp['order_id']);
+    $upgradeInvoice = $harness->em->getRepository(\Box\Mod\Invoice\Entity\Invoice::class)->findOneBy(['hash' => $updateResp['invoice_hash']]);
+    $recordBeforePay = $harness->saasRepo->findByOrderId((int) $buyResp['order_id']);
+
+    // Plan stays on 20gb until upgrade invoice is paid, while invoice bills 29900
+    expect($recordBeforePay?->planId)->toBe('20gb_monthly_v4')
+        ->and((float) $upgradeInvoice?->getBaseIncome())->toBe(29900.0)
+        ->and($orderAfterUpdateReq?->getConfig()['pending_upgrade']['plan_id'] ?? null)->toBe('100gb_monthly_v4');
+
+    // 3. Renew/pay promotes pending upgrade cleanly
+    $harness->saasService->renew($orderAfterUpdateReq);
+    $recordAfterPay = $harness->saasRepo->findByOrderId((int) $buyResp['order_id']);
+    expect($recordAfterPay?->planId)->toBe('100gb_monthly_v4')
+        ->and($orderAfterUpdateReq?->getConfig()['pending_upgrade'] ?? null)->toBeNull();
+});

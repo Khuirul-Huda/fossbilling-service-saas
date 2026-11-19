@@ -1,0 +1,18 @@
+{% if invoice is defined and invoice.hash %}
+{% set saas_ctx = guest.servicesaas_invoice_return({ 'hash': invoice.hash }) %}
+{% if saas_ctx.is_saas %}
+    {% if saas_ctx.has_pending_manual_tx and saas_ctx.status != 'paid' %}
+        <div class="alert alert-info mb-4 d-flex flex-wrap align-items-center justify-content-between gap-2" role="status">
+            <span>{{ 'Konfirmasi pembayaran manual Anda (QRIS / Transfer Bank) telah diterima dan sedang menunggu verifikasi admin. Kuota akan aktif otomatis setelah disetujui.'|trans }}</span>
+            {% if saas_ctx.pending_return_url %}
+                <a href="{{ saas_ctx.pending_return_url }}" class="btn btn-primary btn-sm strata-btn strata-btn-primary">{{ 'Kembali ke Aplikasi'|trans }}</a>
+            {% endif %}
+        </div>
+    {% elseif saas_ctx.status == 'paid' and saas_ctx.return_url %}
+        <div class="alert alert-success mb-4 d-flex flex-wrap align-items-center justify-content-between gap-2" role="status">
+            <span>{{ 'Pembayaran tagihan ini telah lunas dan layanan Anda aktif.'|trans }}</span>
+            <a href="{{ saas_ctx.return_url }}" class="btn btn-primary btn-sm strata-btn strata-btn-primary">{{ 'Kembali ke Aplikasi'|trans }}</a>
+        </div>
+    {% endif %}
+{% endif %}
+{% endif %}

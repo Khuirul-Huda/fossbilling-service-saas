@@ -21,7 +21,7 @@ class Guest extends AbstractApi
     public function checkout_session(array $data): array
     {
         $service = $this->saasService();
-        $bridge = new CheckoutBridge(new EncryptedChannel(), $service->getAppRegistry(), $service->getRepository());
+        $bridge = new CheckoutBridge(EncryptedChannel::persistent(), $service->getAppRegistry(), $service->getRepository());
         if ($this->di !== null) {
             $bridge->setDi($this->di);
         }
@@ -37,7 +37,7 @@ class Guest extends AbstractApi
     public function claim_entitlement(array $data): array
     {
         $service = $this->saasService();
-        $claimer = new EntitlementClaimer(new EncryptedChannel(), $service->getAppRegistry(), $service->getRepository());
+        $claimer = new EntitlementClaimer(EncryptedChannel::persistent(), $service->getAppRegistry(), $service->getRepository());
         if ($this->di !== null) {
             $claimer->setDi($this->di);
         }
@@ -53,9 +53,19 @@ class Guest extends AbstractApi
     public function account_event(array $data): array
     {
         $service = $this->saasService();
-        $sync = new AccountEventSync(new EncryptedChannel(), $service->getAppRegistry(), $service->getRepository());
+        $sync = new AccountEventSync(EncryptedChannel::persistent(), $service->getAppRegistry(), $service->getRepository());
 
         return $sync->handleEncryptedEvent($this->extractEnvelope($data));
+    }
+
+    /**
+     * @param array<string, mixed> $data
+     *
+     * @return array{is_saas: bool, status: string, return_url: ?string, pending_return_url: ?string, has_pending_manual_tx: bool}
+     */
+    public function invoice_return(array $data): array
+    {
+        return $this->saasService()->getInvoiceReturnContext((string) ($data['hash'] ?? ''));
     }
 
     /**

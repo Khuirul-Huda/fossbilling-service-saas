@@ -1,0 +1,34 @@
+{% if invoice is defined and invoice.hash %}
+{% set saas_ctx = guest.servicesaas_invoice_return({ 'hash': invoice.hash }) %}
+{% if saas_ctx.is_saas and saas_ctx.return_url %}
+    {% if saas_ctx.status == 'paid' %}
+        <div class="alert alert-success mb-4 d-flex flex-wrap align-items-center justify-content-between gap-2" role="status">
+            <span>{{ 'Pembayaran berhasil dikonfirmasi! Mengalihkan kembali ke aplikasi...'|trans }}</span>
+            <a href="{{ saas_ctx.return_url }}" class="btn btn-primary btn-sm strata-btn strata-btn-primary">{{ 'Kembali ke Aplikasi'|trans }}</a>
+        </div>
+        <script>window.location.replace({{ saas_ctx.return_url|json_encode|raw }});</script>
+    {% else %}
+        <div class="alert alert-info mb-4 d-flex flex-wrap align-items-center justify-content-between gap-2" role="status">
+            <span>{{ 'Menunggu konfirmasi pembayaran dari gateway. Anda akan dialihkan otomatis setelah pembayaran terverifikasi.'|trans }}</span>
+            <a href="{{ saas_ctx.return_url }}" class="btn btn-outline-primary btn-sm strata-btn strata-btn-secondary">{{ 'Kembali ke Aplikasi'|trans }}</a>
+        </div>
+        <script>
+            (function() {
+                var checkUrl = {{ 'api/guest/servicesaas/invoice_return'|url|json_encode|raw }} + '?hash=' + encodeURIComponent({{ invoice.hash|json_encode|raw }});
+                var timer = setInterval(function() {
+                    fetch(checkUrl, { headers: { 'Accept': 'application/json' } })
+                        .then(function(r) { return r.ok ? r.json() : null; })
+                        .then(function(data) {
+                            var ctx = data && data.result ? data.result : null;
+                            if (ctx && ctx.status === 'paid' && ctx.return_url) {
+                                clearInterval(timer);
+                                window.location.replace(ctx.return_url);
+                            }
+                        })
+                        .catch(function() {});
+                }, 2500);
+            })();
+        </script>
+    {% endif %}
+{% endif %}
+{% endif %}

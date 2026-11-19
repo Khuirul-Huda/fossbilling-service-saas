@@ -20,12 +20,15 @@ final class CheckoutBridge
     private const int GENERATED_PASSWORD_BYTES = 16;
 
     private ?\Pimple\Container $di = null;
+    private readonly CheckoutOrderHelper $orderHelper;
 
     public function __construct(
         private readonly EncryptedChannel $channel,
         private readonly AppRegistry $registry,
         private readonly ServiceSaasRepository $repository,
+        ?CheckoutOrderHelper $orderHelper = null,
     ) {
+        $this->orderHelper = $orderHelper ?? new CheckoutOrderHelper();
     }
 
     public function setDi(\Pimple\Container $di): self
@@ -114,8 +117,10 @@ final class CheckoutBridge
 
     private function updateExistingRecord(ServiceSaasRecord $record, CheckoutRequest $request): ServiceSaasRecord
     {
-        $record->planId = $request->planId;
-        $record->planMetadata = $request->planMetadata;
+        if ($record->provisioningStatus === ServiceSaasRecord::STATUS_PENDING_CLAIM) {
+            $record->planId = $request->planId;
+            $record->planMetadata = $request->planMetadata;
+        }
         $record->targetEmail = $request->email;
         $record->returnRedirectUrl = $request->redirectUrl ?? $record->returnRedirectUrl;
         if ($request->externalUserId !== '') {
@@ -194,15 +199,24 @@ final class CheckoutBridge
 
         $existingOrderId = $payload['existing_order_id'] ?? null;
         if (is_int($existingOrderId) && $existingOrderId > 0) {
-            return $this->issueInvoiceForExistingOrder($di, $existingOrderId, $orderConfig);
+            return $this->issueInvoiceForExistingOrder($di, $existingOrderId, $payload, $orderConfig);
         }
 
         $client = $this->findOrCreateClient($di, (string) $payload['email']);
         $product = $this->findMatchingProduct($di, (string) $payload['app_id'], (string) $payload['plan_id']);
-        $orderId = (int) $di['mod_service']('order')->createOrder($client, $product, [
+        $period = $this->orderHelper->resolvePeriodCode(
+            $product,
+            (string) $payload['plan_id'],
+            is_array($payload['plan_metadata'] ?? null) ? $payload['plan_metadata'] : [],
+        );
+        $createParams = [
             'invoice_option' => 'issue-invoice',
             'config' => $orderConfig,
-        ]);
+        ];
+        if ($period !== null) {
+            $createParams['period'] = $period;
+        }
+        $orderId = (int) $di['mod_service']('order')->createOrder($client, $product, $createParams);
         $order = $di['em']->getRepository(Order::class)->find($orderId)
             ?? throw new \RuntimeException('Created order could not be reloaded.');
 
@@ -214,21 +228,26 @@ final class CheckoutBridge
     }
 
     /**
+     * @param array<string, mixed> $payload
      * @param array<string, mixed> $orderConfig
      *
      * @return array{order_id: int, invoice_hash: string, client_id: int}
      */
-    private function issueInvoiceForExistingOrder(\Pimple\Container $di, int $orderId, array $orderConfig): array
-    {
+    private function issueInvoiceForExistingOrder(
+        \Pimple\Container $di,
+        int $orderId,
+        array $payload,
+        array $orderConfig,
+    ): array {
         $order = $di['em']->getRepository(Order::class)->find($orderId);
         if (!$order instanceof Order) {
             throw new \RuntimeException(sprintf('Existing order #%d was not found.', $orderId));
         }
 
-        $order->setConfig(array_merge($order->getConfig() ?? [], $orderConfig));
-        $order->setUpdatedAt(new \DateTime());
-        $di['em']->persist($order);
-        $di['em']->flush();
+        $product = $this->findMatchingProduct($di, (string) $payload['app_id'], (string) $payload['plan_id']);
+        $payload['currency'] = $order->getCurrency() ?: 'IDR';
+        $target = $this->orderHelper->resolveTargetPlanDetails($di, $product, $payload);
+        $this->orderHelper->applyCheckoutUpdateToOrder($di, $order, $target, $orderConfig);
 
         return [
             'order_id' => $orderId,
@@ -245,6 +264,7 @@ final class CheckoutBridge
         if (!$invoice instanceof Invoice || $invoice->getStatus() !== Invoice::STATUS_UNPAID) {
             $invoiceService = $di['mod_service']('invoice');
             $invoice = $invoiceService->generateForOrder($order);
+            $this->orderHelper->applyPendingUpgradeToDraftInvoice($di, $invoice, $order);
             $di['mod_service']('order')->setUnpaidInvoice($order, $invoice);
             if (!$invoice->isIssued()) {
                 $invoiceService->issueInvoice($invoice, ['id' => $invoice->getId(), 'use_credits' => true]);

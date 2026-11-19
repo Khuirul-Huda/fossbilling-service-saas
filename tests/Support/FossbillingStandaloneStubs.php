@@ -31,6 +31,16 @@ namespace FOSSBilling\Core\Exception {
     }
 }
 
+namespace Box\Mod\Widgets {
+    if (!interface_exists(ProviderInterface::class)) {
+        interface ProviderInterface
+        {
+            /** @return array<int, array<string, mixed>> */
+            public function getWidgets(): array;
+        }
+    }
+}
+
 namespace Pimple {
     if (!class_exists(Container::class)) {
         class Container extends \ArrayObject

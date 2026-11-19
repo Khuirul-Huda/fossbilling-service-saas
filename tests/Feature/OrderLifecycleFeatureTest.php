@@ -5,6 +5,7 @@ declare(strict_types=1);
 require_once dirname(__DIR__) . '/bootstrap.php';
 
 use Box\Mod\Servicesaas\Bridge\AccountEventSync;
+use Box\Mod\Servicesaas\Bridge\PortalSso;
 use Box\Mod\Servicesaas\Client\ProvisioningClient;
 use Box\Mod\Servicesaas\Crypto\EncryptedChannel;
 use Box\Mod\Servicesaas\Persistence\ServiceSaasRecord;
@@ -117,4 +118,36 @@ it('handles email_changed and account_deleted encrypted events via AccountEventS
     // Assert 2
     expect($deleteResp['status'])->toBe('ok')
         ->and($repo->findByOrderId(880)?->provisioningStatus)->toBe(ServiceSaasRecord::STATUS_CANCELED);
+});
+
+it('resolves encrypted single-use PortalSso tokens and rejects replayed tokens', function (): void {
+    $repo = SaasTestContext::createRepository();
+    $repo->insert(new ServiceSaasRecord([
+        'client_id' => 44,
+        'order_id' => 910,
+        'app_id' => 'cloudapp',
+        'plan_id' => '100gb_monthly_v4',
+        'target_email' => 'portal@example.com',
+        'external_user_id' => '9090',
+        'provisioning_status' => ServiceSaasRecord::STATUS_PROVISIONED,
+    ]));
+
+    $envelope = SaasTestContext::seal('cloudapp', [
+        'external_user_id' => '9090',
+        'email' => 'portal@example.com',
+    ]);
+    $token = rtrim(strtr(base64_encode(json_encode($envelope, JSON_THROW_ON_ERROR)), '+/', '-_'), '=');
+
+    $sso = new PortalSso(
+        new EncryptedChannel(),
+        SaasTestContext::createRegistry('https://api.cloudapp.test'),
+        $repo,
+    );
+
+    $target = $sso->resolvePortalTarget($token);
+    expect($target['client_id'])->toBe(44)
+        ->and($target['redirect_path'])->toBe('/order/service/manage/910');
+
+    expect(fn (): array => $sso->resolvePortalTarget($token))
+        ->toThrow(\RuntimeException::class, 'Duplicate request_id');
 });

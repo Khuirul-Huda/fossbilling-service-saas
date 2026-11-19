@@ -19,6 +19,11 @@ final class EncryptedChannel
         $this->replayGuard = $replayGuard ?? new ReplayGuard();
     }
 
+    public static function persistent(): self
+    {
+        return new self(ReplayGuard::persistent());
+    }
+
     public static function normalizeSecretKey(string $secret): string
     {
         if (strlen($secret) === self::SECRET_KEY_BYTES) {

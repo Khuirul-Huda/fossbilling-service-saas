@@ -8,6 +8,8 @@ use Box\Mod\Client\Entity\Client;
 use Box\Mod\Order\Entity\Order;
 use Box\Mod\Product\Entity\Product;
 use Box\Mod\Servicesaas\Bridge\CheckoutBridge;
+use Box\Mod\Servicesaas\Bridge\CheckoutOrderHelper;
+use Box\Mod\Servicesaas\Bridge\ManualPaymentHandler;
 use Box\Mod\Servicesaas\Client\AppRegistry;
 use Box\Mod\Servicesaas\Client\ExpirationCalculator;
 use Box\Mod\Servicesaas\Client\ProvisioningClient;
@@ -16,10 +18,11 @@ use Box\Mod\Servicesaas\Crypto\EncryptedChannel;
 use Box\Mod\Servicesaas\Persistence\SaasSchemaManager;
 use Box\Mod\Servicesaas\Persistence\ServiceSaasRecord;
 use Box\Mod\Servicesaas\Persistence\ServiceSaasRepository;
+use Box\Mod\Widgets\ProviderInterface;
 use FOSSBilling\Core\Container\InjectionAwareInterface;
 use FOSSBilling\Core\Exception\InformationException;
 
-class Service implements InjectionAwareInterface
+class Service implements InjectionAwareInterface, ProviderInterface
 {
     private const int HTTP_NOT_FOUND = 404;
 
@@ -40,6 +43,21 @@ class Service implements InjectionAwareInterface
     }
 
     public function getDi(): ?\Pimple\Container { return $this->di; }
+
+    /** @return array<int, array<string, mixed>> */
+    public function getWidgets(): array
+    {
+        return [
+            ['slot' => 'client.invoice.thankyou.before', 'template' => 'mod_servicesaas_invoice_return'],
+            ['slot' => 'client.invoice.invoice.content.before', 'template' => 'mod_servicesaas_invoice_status'],
+        ];
+    }
+
+    /** @return array{is_saas: bool, status: string, return_url: ?string, pending_return_url: ?string, has_pending_manual_tx: bool} */
+    public function getInvoiceReturnContext(string $hash): array
+    {
+        return (new ManualPaymentHandler($this->requireDi(), $this))->getInvoiceReturnContext($hash);
+    }
 
     /** @return array<string, mixed> */
     public function getModulePermissions(): array
@@ -146,7 +164,7 @@ class Service implements InjectionAwareInterface
         return $this->getStatusForOrder($orderId, $clientId);
     }
 
-    public function resolveValidatedReturnUrl(int $orderId, ?int $clientId = null): ?string
+    public function resolveValidatedReturnUrl(int $orderId, ?int $clientId = null, string $status = 'success'): ?string
     {
         $record = $this->requireOrderRecord($orderId, $clientId);
         $rawUrl = trim((string) ($record->returnRedirectUrl ?? ''));
@@ -154,10 +172,39 @@ class Service implements InjectionAwareInterface
         if ($rawUrl === '' || !$registry->has($record->appId) || !$registry->get($record->appId)->isRedirectUrlAllowed($rawUrl)) {
             return null;
         }
+        $safeStatus = in_array($status, ['success', 'pending', 'fail'], true) ? $status : 'success';
         $parts = explode('#', $rawUrl, 2);
-        $result = $parts[0] . (str_contains($parts[0], '?') ? '&' : '?') . 'status=success';
+        $sep = str_contains($parts[0], '?') ? '&' : '?';
+        $result = $parts[0] . $sep . 'status=' . $safeStatus . '&fb_return=1';
 
         return isset($parts[1]) ? $result . '#' . $parts[1] : $result;
+    }
+
+    public function resolveReturnRedirectForInvoiceId(int $invoiceId, string $status = 'success'): ?string
+    {
+        if ($invoiceId <= 0 || $this->di === null) {
+            return null;
+        }
+        $conn = $this->di['em']->getConnection();
+        if (!$conn->createSchemaManager()->tablesExist(['invoice_item'])) {
+            return null;
+        }
+        $rows = $conn->fetchAllAssociative(
+            "SELECT rel_id FROM invoice_item WHERE invoice_id = :invoice_id AND type = 'order' AND rel_id IS NOT NULL ORDER BY id ASC",
+            ['invoice_id' => $invoiceId],
+        );
+        foreach ($rows as $row) {
+            $orderId = is_numeric($row['rel_id'] ?? null) ? (int) $row['rel_id'] : 0;
+            if ($orderId <= 0 || $this->getRepository()->findByOrderId($orderId) === null) {
+                continue;
+            }
+            $url = $this->resolveValidatedReturnUrl($orderId, null, $status);
+            if ($url !== null) {
+                return $url;
+            }
+        }
+
+        return null;
     }
 
     public function getRepository(): ServiceSaasRepository
@@ -182,6 +229,9 @@ class Service implements InjectionAwareInterface
     private function runTimedAction(Order|array $order, string $action): bool
     {
         $ctx = $this->extractOrderContext($order);
+        if (in_array($action, ['activate', 'renew', 'uncancel'], true)) {
+            $ctx = $this->promotePendingUpgradeIfPresent($order, $ctx);
+        }
         $calc = new ExpirationCalculator();
         $logic = $this->di !== null ? (string) ($this->di['mod_config']('order')['order_renewal_logic'] ?? ExpirationCalculator::LOGIC_FROM_GREATER) : ExpirationCalculator::LOGIC_FROM_GREATER;
         $exp = match ($action) {
@@ -191,6 +241,57 @@ class Service implements InjectionAwareInterface
         };
 
         return $this->dispatchProvisioning($ctx, ['action' => $action, 'expires_at_micro' => ExpirationCalculator::toMicroseconds($exp)]);
+    }
+
+    /**
+     * @param Order|array<string, mixed> $order
+     * @param array{order_id: ?int, client_id: int, period: ?string, expires_at: ?int, config: array<string, mixed>} $ctx
+     * @return array{order_id: ?int, client_id: int, period: ?string, expires_at: ?int, config: array<string, mixed>}
+     */
+    private function promotePendingUpgradeIfPresent(Order|array $order, array $ctx): array
+    {
+        $pending = $ctx['config'][CheckoutOrderHelper::PENDING_UPGRADE_KEY] ?? null;
+        if (!is_array($pending)) {
+            return $ctx;
+        }
+
+        $newPlanId = trim((string) ($pending['plan_id'] ?? ''));
+        $newMeta = ServiceSaasRecord::mergePlanMetadataFromConfig(['plan_metadata' => $pending['plan_metadata'] ?? []]);
+        $newPeriod = is_string($pending['period'] ?? null) && $pending['period'] !== '' ? $pending['period'] : $ctx['period'];
+
+        if ($order instanceof Order && $this->di !== null) {
+            if (!empty($pending['product_id'])) {
+                $order->setProductId((int) $pending['product_id']);
+            }
+            if (!empty($pending['title'])) {
+                $order->setTitle((string) $pending['title']);
+            }
+            if (isset($pending['price'])) {
+                $order->setPrice((string) $pending['price']);
+            }
+            if ($newPeriod !== null) {
+                $order->setPeriod($newPeriod);
+            }
+            $updatedCfg = $order->getConfig() ?? [];
+            if ($newPlanId !== '') {
+                $updatedCfg['plan_id'] = $newPlanId;
+            }
+            $updatedCfg['plan_metadata'] = $newMeta;
+            unset($updatedCfg[CheckoutOrderHelper::PENDING_UPGRADE_KEY]);
+            $order->setConfig($updatedCfg);
+            $order->setUpdatedAt(new \DateTime());
+            $this->di['em']->persist($order);
+            $this->di['em']->flush();
+        }
+
+        if ($newPlanId !== '') {
+            $ctx['config']['plan_id'] = $newPlanId;
+        }
+        $ctx['config']['plan_metadata'] = $newMeta;
+        $ctx['config']['upgraded_from_pending'] = true;
+        $ctx['period'] = $newPeriod;
+
+        return $ctx;
     }
 
     /**
@@ -206,6 +307,9 @@ class Service implements InjectionAwareInterface
                 return true;
             }
             $record = $this->getRepository()->insert($this->buildRecord($context));
+        } elseif (!empty($context['config']['upgraded_from_pending'])) {
+            $record->planId = (string) ($context['config']['plan_id'] ?? $record->planId);
+            $record->planMetadata = ServiceSaasRecord::mergePlanMetadataFromConfig($context['config']);
         }
         $res = ($this->provisioningClient ??= new ProvisioningClient(new EncryptedChannel(), $this->getAppRegistry()))->dispatch(new ProvisioningPayload([
             'action' => (string) $options['action'], 'app_id' => $record->appId, 'order_id' => $record->orderId,
