@@ -19,6 +19,7 @@ namespace Box\Mod\Servicesaas\Compat {
     use Box\Mod\Invoice\Entity\Invoice;
     use Box\Mod\Invoice\ServicePayGateway;
     use Doctrine\DBAL\Connection;
+    use Symfony\Component\HttpFoundation\RedirectResponse;
     use Symfony\Component\HttpFoundation\Response;
 
     if (!interface_exists(InjectionAwareInterface::class, false)) {
@@ -125,6 +126,38 @@ namespace Box\Mod\Servicesaas\Compat {
             }
 
             return new Response($html, $status);
+        }
+
+        public static function binaryResponse(string $path, string $mime, string $filename = ''): Response
+        {
+            $headers = [
+                'Content-Type' => $mime !== '' ? $mime : 'application/octet-stream',
+                'Cache-Control' => 'private, no-store, max-age=0',
+                'X-Robots-Tag' => 'noindex, noarchive',
+                'X-Content-Type-Options' => 'nosniff',
+            ];
+            if ($filename !== '') {
+                $safeName = preg_replace('/[^a-zA-Z0-9._-]/', '_', basename($filename));
+                $headers['Content-Disposition'] = 'inline; filename="' . $safeName . '"';
+            }
+
+            return new Response((string) file_get_contents($path), Response::HTTP_OK, $headers);
+        }
+
+        public static function redirectResponse(mixed $app, string $url): Response
+        {
+            if (str_starts_with($url, 'http://') || str_starts_with($url, 'https://')) {
+                if (is_object($app) && method_exists($app, 'redirectUrl')) {
+                    return $app->redirectUrl($url, Response::HTTP_FOUND);
+                }
+
+                return new RedirectResponse($url, Response::HTTP_FOUND);
+            }
+            if (is_object($app) && method_exists($app, 'redirect')) {
+                return $app->redirect($url);
+            }
+
+            return new RedirectResponse($url, Response::HTTP_FOUND);
         }
     }
 }

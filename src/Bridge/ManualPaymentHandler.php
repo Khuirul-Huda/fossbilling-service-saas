@@ -22,8 +22,10 @@ final class ManualPaymentHandler
      * @param array<string, mixed> $post
      * @return array{invoice_hash: string, redirect_url: string}
      */
-    public function handleSubmission(array $post): array
+    public function handleSubmission(array $post, mixed $uploadedFile = null): array
     {
+        $this->verifyCaptcha($post);
+
         $invoiceHash = preg_replace('/[^a-zA-Z0-9]/', '', (string) ($post['invoice_hash'] ?? ''));
         $gatewayId = is_numeric($post['gateway_id'] ?? null) ? (int) $post['gateway_id'] : 0;
         $senderName = trim((string) ($post['sender_name'] ?? ''));
@@ -42,17 +44,25 @@ final class ManualPaymentHandler
         }
 
         $invoiceId = InvoiceCompat::id($invoice);
-        $txnId = $this->resolveTxnId($post, $invoiceId);
-        $note = $this->formatNote($post);
+        $proofStorage = $this->saasService->getProofStorage();
+        $proofStorage->storeUploadedProof($invoiceId, $uploadedFile);
 
-        $this->di['mod_service']('invoice', 'transaction')->create([
-            'invoice_id' => $invoiceId,
-            'gateway_id' => $gatewayId,
-            'txn_id' => $txnId,
-            'note' => $note,
-            'source' => 'manual_form',
-            'post' => $post,
-        ]);
+        $txnId = $this->resolveTxnId($post, $invoiceId);
+        $note = $this->formatNote($post, $this->buildAdminProofUrl($invoiceId));
+
+        try {
+            $this->di['mod_service']('invoice', 'transaction')->create([
+                'invoice_id' => $invoiceId,
+                'gateway_id' => $gatewayId,
+                'txn_id' => $txnId,
+                'note' => $note,
+                'source' => 'manual_form',
+                'post' => $post,
+            ]);
+        } catch (\Throwable $e) {
+            $proofStorage->purgeProofForInvoice($invoiceId);
+            throw $e;
+        }
 
         $pendingReturnUrl = $this->saasService->resolveReturnRedirectForInvoiceId($invoiceId, 'pending');
         $fallbackUrl = $this->buildInvoiceUrl($invoiceHash);
@@ -134,7 +144,31 @@ final class ManualPaymentHandler
     }
 
     /** @param array<string, mixed> $post */
-    private function formatNote(array $post): string
+    private function verifyCaptcha(array $post): void
+    {
+        try {
+            if (isset($this->di['mod_service'])) {
+                try {
+                    $ext = $this->di['mod_service']('extension');
+                    if (is_object($ext) && method_exists($ext, 'isExtensionActive') && !$ext->isExtensionActive('mod', 'antispam')) {
+                        return;
+                    }
+                } catch (\Throwable) {
+                    // Extension service may be absent in unit tests; continue to Antispam lookup.
+                }
+            }
+            $antispam = $this->di['mod_service']('Antispam');
+        } catch (\Throwable) {
+            return;
+        }
+
+        if (is_object($antispam) && method_exists($antispam, 'checkCaptcha')) {
+            $antispam->checkCaptcha($post);
+        }
+    }
+
+    /** @param array<string, mixed> $post */
+    private function formatNote(array $post, string $proofUrl = ''): string
     {
         $parts = [];
         $channel = trim((string) ($post['payment_channel'] ?? ''));
@@ -154,8 +188,20 @@ final class ManualPaymentHandler
         if ($ref !== '') {
             $parts[] = 'Ref: ' . $ref;
         }
+        if ($proofUrl !== '') {
+            $parts[] = 'Bukti: ' . $proofUrl;
+        }
 
         return implode(' | ', $parts);
+    }
+
+    private function buildAdminProofUrl(int $invoiceId): string
+    {
+        if (isset($this->di['url']) && method_exists($this->di['url'], 'adminLink')) {
+            return (string) $this->di['url']->adminLink('servicesaas/proof/' . $invoiceId);
+        }
+
+        return '/admin/servicesaas/proof/' . $invoiceId;
     }
 
     private function buildInvoiceUrl(string $hash): string

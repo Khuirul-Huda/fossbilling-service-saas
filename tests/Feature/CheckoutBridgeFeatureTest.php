@@ -227,3 +227,81 @@ it('matches single multi-period tier product for both monthly and yearly checkou
     expect($order?->getPeriod())->toBe('1Y')
         ->and($record?->planId)->toBe('20gb_yearly_v4');
 });
+
+it('retains manual payment proof when SaaS provisioning fails and purges proof once retry succeeds (Option A)', function (): void {
+    $saasDown = true;
+    $recorder = new FakeTransportRecorder(
+        SaasTestContext::TEST_SECRET,
+        function (array $payload) use (&$saasDown): array {
+            if ($saasDown) {
+                throw new \RuntimeException('Remote SaaS endpoint unavailable (HTTP 503)');
+            }
+
+            return ['status' => 'provisioned', 'external_user_id' => 'ext-777', 'order_id' => $payload['order_id'] ?? 0];
+        },
+    );
+
+    $harness = new DoctrineBillingHarness('https://api.cloudapp.test', null, $recorder->asClosure());
+    $harness->connection->executeStatement('CREATE TABLE IF NOT EXISTS invoice_item (id INTEGER PRIMARY KEY, invoice_id INTEGER, rel_id INTEGER, type TEXT)');
+    $harness->seedSaasProduct('200gb_monthly', 150000.0);
+
+    $proofDir = sys_get_temp_dir() . '/saas_opt_a_' . bin2hex(random_bytes(5));
+    $srcDir = sys_get_temp_dir() . '/saas_opt_a_src_' . bin2hex(random_bytes(5));
+    mkdir($proofDir, 0750, true);
+    mkdir($srcDir, 0750, true);
+
+    try {
+        $storage = new \Box\Mod\Servicesaas\Bridge\ManualProofStorage($proofDir);
+        $harness->saasService->setProofStorage($storage);
+
+        $bridge = (new CheckoutBridge(
+            new EncryptedChannel(),
+            SaasTestContext::createRegistry('https://api.cloudapp.test'),
+            $harness->saasRepo,
+        ))->setDi($harness->di);
+
+        $resp = SaasTestContext::open($bridge->handleEncryptedRequest(SaasTestContext::seal('cloudapp', [
+            'app_id' => 'cloudapp',
+            'action' => 'buy',
+            'email' => 'optiona@example.com',
+            'external_user_id' => '777',
+            'plan_id' => '200gb_monthly',
+            'redirect_url' => 'https://app.cloudapp.test/done',
+        ])));
+
+        $order = $harness->em->getRepository(Order::class)->find((int) $resp['order_id']);
+        $invoice = $harness->em->getRepository(\Box\Mod\Invoice\Entity\Invoice::class)->findOneBy(['hash' => $resp['invoice_hash']]);
+        $invoiceId = (int) $invoice?->getId();
+        $harness->connection->insert('invoice_item', ['invoice_id' => $invoiceId, 'rel_id' => $order?->getId(), 'type' => 'order']);
+
+        $pngPath = $srcDir . '/proof.png';
+        file_put_contents($pngPath, base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO7+X2kAAAAASUVORK5CYII='));
+        $stored = $storage->storeUploadedProof($invoiceId, new \Symfony\Component\HttpFoundation\File\UploadedFile($pngPath, 'proof.png', 'image/png', null, true));
+
+        // 1. Remote SaaS is down -> activation throws & payment proof MUST stay on disk for retry
+        expect(fn () => $harness->saasService->activate($order))
+            ->toThrow(\RuntimeException::class, 'Remote SaaS endpoint unavailable');
+
+        expect($storage->readProof($invoiceId))->not->toBeNull()
+            ->and(is_file($proofDir . '/' . $stored['filename']))->toBeTrue()
+            ->and($harness->saasService->getStatusForOrder((int) $order?->getId())['manual_proofs'] ?? [])->toHaveCount(1);
+
+        // 2. Remote SaaS recovers -> Admin retries Activate/Resync -> proof is auto-purged
+        $saasDown = false;
+        expect($harness->saasService->activate($order))->toBeTrue()
+            ->and($storage->readProof($invoiceId))->toBeNull()
+            ->and(is_file($proofDir . '/' . $stored['filename']))->toBeFalse()
+            ->and($harness->saasService->getStatusForOrder((int) $order?->getId())['manual_proofs'] ?? [])->toBe([]);
+    } finally {
+        foreach ([$proofDir, $srcDir] as $dir) {
+            if (is_dir($dir)) {
+                foreach (scandir($dir) ?: [] as $item) {
+                    if ($item !== '.' && $item !== '..') {
+                        @unlink($dir . '/' . $item);
+                    }
+                }
+                @rmdir($dir);
+            }
+        }
+    }
+});

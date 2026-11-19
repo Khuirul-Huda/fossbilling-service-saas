@@ -12,7 +12,9 @@ use Box\Mod\Product\Entity\Product;
 use Box\Mod\Servicesaas\Bridge\CheckoutBridge;
 use Box\Mod\Servicesaas\Bridge\CheckoutOrderHelper;
 use Box\Mod\Servicesaas\Bridge\ManualPaymentHandler;
+use Box\Mod\Servicesaas\Bridge\ManualProofStorage;
 use Box\Mod\Servicesaas\Bridge\PlanIdResolver;
+use Box\Mod\Servicesaas\Bridge\PrivateQrisStore;
 use Box\Mod\Servicesaas\Client\AppRegistry;
 use Box\Mod\Servicesaas\Client\ExpirationCalculator;
 use Box\Mod\Servicesaas\Client\ProvisioningClient;
@@ -31,6 +33,8 @@ class Service implements InjectionAwareInterface, WidgetProviderInterface
     private const int HTTP_NOT_FOUND = 404;
 
     protected ?\Pimple\Container $di = null;
+    private ?ManualProofStorage $proofStorage = null;
+    private ?PrivateQrisStore $privateQrisStore = null;
 
     public function __construct(
         private ?ServiceSaasRepository $repository = null,
@@ -154,8 +158,50 @@ class Service implements InjectionAwareInterface, WidgetProviderInterface
         $record = $this->requireOrderRecord($orderId, $clientId);
         $data = $record->toApiArray();
         $data['app_name'] = $this->getAppRegistry()->has($record->appId) ? $this->getAppRegistry()->get($record->appId)->name : $record->appId;
+        if ($clientId === null && $this->di !== null && $record->orderId > 0) {
+            $proofs = $this->getProofStorage()->findExistingProofsForOrder(RuntimeCompat::dbal($this->di), (int) $record->orderId);
+            $data['manual_proofs'] = array_map(fn (array $p): array => [
+                ...$p,
+                'url' => isset($this->di['url']) ? (string) $this->di['url']->adminLink('servicesaas/proof/' . $p['invoice_id']) : '/admin/servicesaas/proof/' . $p['invoice_id'],
+            ], $proofs);
+        }
 
         return $data;
+    }
+
+    public function getProofStorage(): ManualProofStorage
+    {
+        return $this->proofStorage ??= new ManualProofStorage();
+    }
+
+    public function setProofStorage(ManualProofStorage $proofStorage): void
+    {
+        $this->proofStorage = $proofStorage;
+    }
+
+    public function getPrivateQrisStore(): PrivateQrisStore
+    {
+        return $this->privateQrisStore ??= new PrivateQrisStore();
+    }
+
+    public function setPrivateQrisStore(PrivateQrisStore $privateQrisStore): void
+    {
+        $this->privateQrisStore = $privateQrisStore;
+    }
+
+    public function getSignedQrisFallbackUrl(string $invoiceHash): string
+    {
+        $store = $this->getPrivateQrisStore();
+        if ($invoiceHash === '' || $store->read() === null) {
+            return '';
+        }
+
+        $params = $store->signParams($invoiceHash);
+        if ($this->di !== null && isset($this->di['url'])) {
+            return (string) $this->di['url']->link('servicesaas/qris-image', $params);
+        }
+
+        return '/servicesaas/qris-image?' . http_build_query($params);
     }
 
     /** @return array<string, mixed> */
@@ -328,6 +374,14 @@ class Service implements InjectionAwareInterface, WidgetProviderInterface
         }
         $record->lastSyncAt = gmdate('Y-m-d H:i:s');
         $this->getRepository()->update($record);
+
+        if (
+            $this->di !== null
+            && $record->orderId > 0
+            && in_array((string) ($options['action'] ?? ''), ['activate', 'renew', 'uncancel'], true)
+        ) {
+            $this->getProofStorage()->purgeProofsForOrder(RuntimeCompat::dbal($this->di), (int) $record->orderId);
+        }
 
         return true;
     }

@@ -50,6 +50,25 @@
                 <td class="text-end">{{ 'Plan Metadata'|trans }}:</td>
                 <td class="font-monospace small">{{ saas.plan_metadata|default({})|json_encode }}</td>
             </tr>
+            <tr>
+                <td class="text-end">{{ 'Payment Proof'|trans }}:</td>
+                <td>
+                    {% if saas.manual_proofs|default([]) is not empty %}
+                        <div class="d-flex flex-wrap gap-2">
+                            {% for proof in saas.manual_proofs %}
+                                <a class="btn btn-sm btn-outline-primary"
+                                   href="{{ ('servicesaas/proof/' ~ proof.invoice_id)|url }}"
+                                   target="_blank"
+                                   rel="noopener noreferrer">
+                                    {{ 'View Proof Invoice #'|trans }}{{ proof.invoice_id }} ({{ proof.mime }})
+                                </a>
+                            {% endfor %}
+                        </div>
+                    {% else %}
+                        <span class="text-secondary small">{{ 'None on disk (not uploaded or already purged after successful provisioning)'|trans }}</span>
+                    {% endif %}
+                </td>
+            </tr>
         </tbody>
     </table>
 </div>

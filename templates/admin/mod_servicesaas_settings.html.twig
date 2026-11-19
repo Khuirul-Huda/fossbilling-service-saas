@@ -22,6 +22,7 @@
 
 {% block content %}
 {% set apps = admin.servicesaas_list_apps %}
+{% set qris_fallback = admin.servicesaas_qris_fallback_status %}
 
 <div class="card mb-4">
     <div class="card-header">
@@ -68,6 +69,42 @@
                 <button type="submit" class="btn btn-primary">{{ 'Save App'|trans }}</button>
             </div>
         </form>
+    </div>
+</div>
+
+<div class="card mb-4">
+    <div class="card-header">
+        <div>
+            <h3 class="card-title">{{ 'Private Fallback QRIS Image'|trans }}</h3>
+            <p class="card-subtitle">{{ 'Stored privately outside public webroot and served via time-limited HMAC signed URLs when ManualTransfer static QRIS payload is empty.'|trans }}</p>
+        </div>
+    </div>
+    <div class="card-body">
+        <div class="mb-3">
+            {% if qris_fallback.configured %}
+                <span class="badge bg-success-lt">{{ 'Active'|trans }}</span>
+                <span class="ms-2 font-monospace small">{{ qris_fallback.filename }} ({{ qris_fallback.mime }}, {{ (qris_fallback.size / 1024)|round(1) }} KB)</span>
+                <span class="text-secondary small ms-2">{{ 'Uploaded'|trans }}: {{ qris_fallback.uploaded_at }}</span>
+            {% else %}
+                <span class="badge bg-secondary-lt">{{ 'Not uploaded'|trans }}</span>
+            {% endif %}
+        </div>
+        <div class="d-flex flex-wrap align-items-end gap-3">
+            <form method="post" action="{{ 'servicesaas/qris-fallback'|url }}" enctype="multipart/form-data" class="d-flex flex-wrap align-items-end gap-2 flex-grow-1">
+                <input type="hidden" name="CSRFToken" value="{{ CSRFToken }}">
+                <div class="flex-grow-1">
+                    <label class="form-label" for="qris-fallback-image">{{ 'Upload QRIS Fallback Image (JPG, PNG, WebP, max 5 MB)'|trans }}</label>
+                    <input type="file" class="form-control" id="qris-fallback-image" name="qris_fallback_image" accept="image/jpeg,image/png,image/webp" required>
+                </div>
+                <button type="submit" class="btn btn-primary">{{ 'Upload Private QRIS'|trans }}</button>
+            </form>
+            {% if qris_fallback.configured %}
+                <form method="post" action="{{ 'servicesaas/qris-fallback/delete'|url }}">
+                    <input type="hidden" name="CSRFToken" value="{{ CSRFToken }}">
+                    <button type="submit" class="btn btn-outline-danger">{{ 'Remove QRIS Image'|trans }}</button>
+                </form>
+            {% endif %}
+        </div>
     </div>
 </div>
 
