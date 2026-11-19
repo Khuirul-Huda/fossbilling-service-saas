@@ -7,7 +7,6 @@ namespace Box\Mod\Servicesaas\Bridge;
 use Box\Mod\Invoice\Entity\Invoice;
 use Box\Mod\Invoice\Entity\InvoiceItem;
 use Box\Mod\Invoice\Entity\PayGateway;
-use Box\Mod\Order\Entity\Order;
 use Box\Mod\Servicesaas\Compat\RuntimeCompat;
 
 /**
@@ -64,14 +63,15 @@ final class InvoiceCompat
         return (float) (method_exists($invoice, 'getBaseIncome') ? $invoice->getBaseIncome() : ($invoice->base_income ?? 0));
     }
 
-    public static function generateForOrder(\Pimple\Container $di, Order $order): object
+    public static function generateForOrder(\Pimple\Container $di, object $order): object
     {
         $invoiceService = $di['mod_service']('invoice');
         if (RuntimeCompat::usesDoctrineInvoice($di)) {
             return $invoiceService->generateForOrder($order);
         }
 
-        $rbOrder = $di['db']->getExistingModelById('ClientOrder', (int) $order->getId(), 'Order not found.');
+        $orderId = method_exists($order, 'getId') ? (int) $order->getId() : (int) ($order->id ?? 0);
+        $rbOrder = $di['db']->getExistingModelById('ClientOrder', $orderId, 'Order not found.');
 
         return $invoiceService->generateForOrder($rbOrder);
     }
@@ -87,7 +87,7 @@ final class InvoiceCompat
         }
     }
 
-    /** @param array{order: Order, pending: array<string, mixed>} $ctx */
+    /** @param array{order: object, pending: array<string, mixed>} $ctx */
     public static function applyPendingUpgrade(\Pimple\Container $di, object $invoice, array $ctx): void
     {
         $order = $ctx['order'];
@@ -129,8 +129,8 @@ final class InvoiceCompat
 
     public static function cancelUnpaid(\Pimple\Container $di, object $invoice, string $reason): void
     {
-        $invoiceService = $di['mod_service']('invoice');
         if (RuntimeCompat::usesDoctrineInvoice($di) && $invoice instanceof Invoice) {
+            $invoiceService = $di['mod_service']('invoice');
             if (method_exists($invoiceService, 'cancelInvoice') && $invoice->isIssued()) {
                 $invoiceService->cancelInvoice($invoice, ['reason' => $reason]);
             } else {
