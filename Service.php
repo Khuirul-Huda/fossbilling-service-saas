@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Box\Mod\Servicesaas;
 
+require_once __DIR__ . '/src/Compat.php';
+
 use Box\Mod\Client\Entity\Client;
 use Box\Mod\Order\Entity\Order;
 use Box\Mod\Product\Entity\Product;
@@ -14,15 +16,16 @@ use Box\Mod\Servicesaas\Client\AppRegistry;
 use Box\Mod\Servicesaas\Client\ExpirationCalculator;
 use Box\Mod\Servicesaas\Client\ProvisioningClient;
 use Box\Mod\Servicesaas\Client\ProvisioningPayload;
+use Box\Mod\Servicesaas\Compat\InformationException;
+use Box\Mod\Servicesaas\Compat\InjectionAwareInterface;
+use Box\Mod\Servicesaas\Compat\RuntimeCompat;
+use Box\Mod\Servicesaas\Compat\WidgetProviderInterface;
 use Box\Mod\Servicesaas\Crypto\EncryptedChannel;
 use Box\Mod\Servicesaas\Persistence\SaasSchemaManager;
 use Box\Mod\Servicesaas\Persistence\ServiceSaasRecord;
 use Box\Mod\Servicesaas\Persistence\ServiceSaasRepository;
-use Box\Mod\Widgets\ProviderInterface;
-use FOSSBilling\Core\Container\InjectionAwareInterface;
-use FOSSBilling\Core\Exception\InformationException;
 
-class Service implements InjectionAwareInterface, ProviderInterface
+class Service implements InjectionAwareInterface, WidgetProviderInterface
 {
     private const int HTTP_NOT_FOUND = 404;
 
@@ -70,14 +73,14 @@ class Service implements InjectionAwareInterface, ProviderInterface
 
     public function install(): bool
     {
-        (new SaasSchemaManager($this->requireDi()['em']->getConnection()))->ensureTableExists();
+        (new SaasSchemaManager(RuntimeCompat::dbal($this->requireDi())))->ensureTableExists();
 
         return true;
     }
 
     public function uninstall(): bool
     {
-        (new SaasSchemaManager($this->requireDi()['em']->getConnection()))->dropTableIfExists();
+        (new SaasSchemaManager(RuntimeCompat::dbal($this->requireDi())))->dropTableIfExists();
 
         return true;
     }
@@ -185,7 +188,7 @@ class Service implements InjectionAwareInterface, ProviderInterface
         if ($invoiceId <= 0 || $this->di === null) {
             return null;
         }
-        $conn = $this->di['em']->getConnection();
+        $conn = RuntimeCompat::dbal($this->di);
         if (!$conn->createSchemaManager()->tablesExist(['invoice_item'])) {
             return null;
         }
@@ -209,7 +212,7 @@ class Service implements InjectionAwareInterface, ProviderInterface
 
     public function getRepository(): ServiceSaasRepository
     {
-        return $this->repository ??= new ServiceSaasRepository($this->requireDi()['em']->getConnection());
+        return $this->repository ??= new ServiceSaasRepository(RuntimeCompat::dbal($this->requireDi()));
     }
 
     public function getAppRegistry(): AppRegistry
@@ -389,13 +392,6 @@ class Service implements InjectionAwareInterface, ProviderInterface
 
     private static function registerSubNamespaceAutoloader(): void
     {
-        if (class_exists(CheckoutBridge::class, false)) {
-            return;
-        }
-        spl_autoload_register(static function (string $class): void {
-            if (str_starts_with($class, 'Box\\Mod\\Servicesaas\\') && is_file($file = __DIR__ . '/src/' . str_replace('\\', '/', substr($class, strlen('Box\\Mod\\Servicesaas\\'))) . '.php')) {
-                require_once $file;
-            }
-        });
+        require_once __DIR__ . '/src/Compat.php';
     }
 }

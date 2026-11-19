@@ -4,8 +4,6 @@ declare(strict_types=1);
 
 namespace Box\Mod\Servicesaas\Bridge;
 
-use Box\Mod\Invoice\Entity\Invoice;
-use Box\Mod\Invoice\Entity\InvoiceItem;
 use Box\Mod\Order\Entity\Order;
 use Box\Mod\Product\Entity\Product;
 use Box\Mod\Product\Entity\ProductPayment;
@@ -102,7 +100,7 @@ final class CheckoutOrderHelper
 
     public function applyPendingUpgradeToDraftInvoice(
         \Pimple\Container $di,
-        Invoice $invoice,
+        object $invoice,
         Order $order,
     ): void {
         $pending = ($order->getConfig() ?? [])[self::PENDING_UPGRADE_KEY] ?? null;
@@ -110,28 +108,7 @@ final class CheckoutOrderHelper
             return;
         }
 
-        $targetPrice = (float) ($pending['price'] ?? $order->getPrice());
-        $targetTitle = (string) ($pending['title'] ?? $order->getTitle());
-        $targetPeriod = is_string($pending['period'] ?? null) ? $pending['period'] : $order->getPeriod();
-
-        $invoice->setBaseIncome((string) $targetPrice);
-        if (class_exists(InvoiceItem::class)) {
-            try {
-                $items = $di['em']->getRepository(InvoiceItem::class)->findBy(['invoice' => $invoice]);
-                foreach ($items as $item) {
-                    if ($item instanceof InvoiceItem) {
-                        $item->setTitle($targetTitle);
-                        $item->setPrice($targetPrice);
-                        $item->setPeriod($targetPeriod);
-                        $di['em']->persist($item);
-                    }
-                }
-            } catch (\Throwable) {
-                // Harness environments without InvoiceItem entity metadata rely on Invoice::baseIncome.
-            }
-        }
-        $di['em']->persist($invoice);
-        $di['em']->flush();
+        InvoiceCompat::applyPendingUpgrade($di, $invoice, ['order' => $order, 'pending' => $pending]);
     }
 
     /** @param array{plan_id: string, price: float, period: ?string} $target */
@@ -142,8 +119,8 @@ final class CheckoutOrderHelper
             return;
         }
 
-        $invoice = $di['em']->getRepository(Invoice::class)->find($unpaidId);
-        if (!$invoice instanceof Invoice || $invoice->getStatus() !== Invoice::STATUS_UNPAID) {
+        $invoice = InvoiceCompat::findById($di, (int) $unpaidId);
+        if ($invoice === null || !InvoiceCompat::isUnpaid($invoice)) {
             $order->setUnpaidInvoiceId(null);
 
             return;
@@ -153,13 +130,7 @@ final class CheckoutOrderHelper
             return;
         }
 
-        $invoiceService = $di['mod_service']('invoice');
-        if (method_exists($invoiceService, 'cancelInvoice') && $invoice->isIssued()) {
-            $invoiceService->cancelInvoice($invoice, ['reason' => 'Superseded by plan change to ' . $target['plan_id']]);
-        } else {
-            $invoice->setStatus(Invoice::STATUS_CANCELED);
-            $di['em']->persist($invoice);
-        }
+        InvoiceCompat::cancelUnpaid($di, $invoice, 'Superseded by plan change to ' . $target['plan_id']);
 
         $orderService = $di['mod_service']('order');
         if (method_exists($orderService, 'unsetUnpaidInvoice')) {
@@ -170,7 +141,7 @@ final class CheckoutOrderHelper
     }
 
     /** @param array{plan_id: string, price: float, period: ?string} $target */
-    private function unpaidInvoiceMatchesTarget(Order $order, Invoice $invoice, array $target): bool
+    private function unpaidInvoiceMatchesTarget(Order $order, object $invoice, array $target): bool
     {
         $config = $order->getConfig() ?? [];
         $pending = $config[self::PENDING_UPGRADE_KEY] ?? null;
@@ -181,7 +152,7 @@ final class CheckoutOrderHelper
         }
 
         return ($config['plan_id'] ?? '') === $target['plan_id']
-            && abs((float) $invoice->getBaseIncome() - $target['price']) < 0.01;
+            && abs(InvoiceCompat::baseIncome($invoice) - $target['price']) < 0.01;
     }
 
     private function computeProductPrice(

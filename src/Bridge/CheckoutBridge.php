@@ -5,11 +5,11 @@ declare(strict_types=1);
 namespace Box\Mod\Servicesaas\Bridge;
 
 use Box\Mod\Client\Entity\Client;
-use Box\Mod\Invoice\Entity\Invoice;
 use Box\Mod\Order\Entity\Order;
 use Box\Mod\Product\Entity\Product;
 use Box\Mod\Servicesaas\Client\AppConfig;
 use Box\Mod\Servicesaas\Client\AppRegistry;
+use Box\Mod\Servicesaas\Compat\RuntimeCompat;
 use Box\Mod\Servicesaas\Crypto\EncryptedChannel;
 use Box\Mod\Servicesaas\Crypto\EnvelopeDto;
 use Box\Mod\Servicesaas\Persistence\ServiceSaasRecord;
@@ -223,7 +223,7 @@ final class CheckoutBridge
         return [
             'order_id' => $orderId,
             'invoice_hash' => $this->resolveOrderInvoiceHash($di, $order),
-            'client_id' => (int) $client->getId(),
+            'client_id' => (int) RuntimeCompat::clientId($client),
         ];
     }
 
@@ -259,19 +259,16 @@ final class CheckoutBridge
     private function resolveOrderInvoiceHash(\Pimple\Container $di, Order $order): string
     {
         $unpaidId = $order->getUnpaidInvoiceId();
-        $invoice = $unpaidId !== null ? $di['em']->getRepository(Invoice::class)->find($unpaidId) : null;
+        $invoice = $unpaidId !== null ? InvoiceCompat::findById($di, (int) $unpaidId) : null;
 
-        if (!$invoice instanceof Invoice || $invoice->getStatus() !== Invoice::STATUS_UNPAID) {
-            $invoiceService = $di['mod_service']('invoice');
-            $invoice = $invoiceService->generateForOrder($order);
+        if ($invoice === null || !InvoiceCompat::isUnpaid($invoice)) {
+            $invoice = InvoiceCompat::generateForOrder($di, $order);
             $this->orderHelper->applyPendingUpgradeToDraftInvoice($di, $invoice, $order);
             $di['mod_service']('order')->setUnpaidInvoice($order, $invoice);
-            if (!$invoice->isIssued()) {
-                $invoiceService->issueInvoice($invoice, ['id' => $invoice->getId(), 'use_credits' => true]);
-            }
+            InvoiceCompat::issueIfNeeded($di, $invoice);
         }
 
-        $hash = (string) $invoice->getHash();
+        $hash = InvoiceCompat::hash($invoice);
         if ($hash === '') {
             throw new \RuntimeException('Generated invoice is missing a public hash.');
         }

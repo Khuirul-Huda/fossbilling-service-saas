@@ -4,12 +4,14 @@ declare(strict_types=1);
 
 namespace Box\Mod\Servicesaas\Api;
 
+require_once dirname(__DIR__) . '/src/Compat.php';
+
 use Box\Mod\Servicesaas\Bridge\AccountEventSync;
 use Box\Mod\Servicesaas\Bridge\CheckoutBridge;
 use Box\Mod\Servicesaas\Bridge\EntitlementClaimer;
+use Box\Mod\Servicesaas\Compat\AbstractApi;
 use Box\Mod\Servicesaas\Crypto\EncryptedChannel;
 use Box\Mod\Servicesaas\Service;
-use FOSSBilling\Core\Api\AbstractApi;
 
 class Guest extends AbstractApi
 {

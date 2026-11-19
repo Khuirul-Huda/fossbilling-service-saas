@@ -4,9 +4,12 @@ declare(strict_types=1);
 
 namespace Box\Mod\Servicesaas\Api;
 
+require_once dirname(__DIR__) . '/src/Compat.php';
+
+use Box\Mod\Servicesaas\Compat\AbstractApi;
+use Box\Mod\Servicesaas\Compat\InformationException;
+use Box\Mod\Servicesaas\Compat\RuntimeCompat;
 use Box\Mod\Servicesaas\Service;
-use FOSSBilling\Core\Api\AbstractApi;
-use FOSSBilling\Core\Validation\Api\RequiredParams;
 
 class Client extends AbstractApi
 {
@@ -15,10 +18,9 @@ class Client extends AbstractApi
      *
      * @return array<string, mixed>
      */
-    #[RequiredParams(['order_id' => 'Order ID is required'])]
     public function status(array $data): array
     {
-        return $this->saasService()->getStatusForOrder((int) $data['order_id'], $this->requireClientId());
+        return $this->saasService()->getStatusForOrder($this->requireOrderId($data), $this->requireClientId());
     }
 
     /**
@@ -26,10 +28,9 @@ class Client extends AbstractApi
      *
      * @return array<string, mixed>
      */
-    #[RequiredParams(['order_id' => 'Order ID is required'])]
     public function sync_claim(array $data): array
     {
-        return $this->saasService()->syncClaimForOrder((int) $data['order_id'], $this->requireClientId());
+        return $this->saasService()->syncClaimForOrder($this->requireOrderId($data), $this->requireClientId());
     }
 
     /**
@@ -37,22 +38,31 @@ class Client extends AbstractApi
      *
      * @return array{url: ?string}
      */
-    #[RequiredParams(['order_id' => 'Order ID is required'])]
     public function return_url(array $data): array
     {
         return [
-            'url' => $this->saasService()->resolveValidatedReturnUrl((int) $data['order_id'], $this->requireClientId()),
+            'url' => $this->saasService()->resolveValidatedReturnUrl($this->requireOrderId($data), $this->requireClientId()),
         ];
+    }
+
+    /** @param array<string, mixed> $data */
+    private function requireOrderId(array $data): int
+    {
+        if (empty($data['order_id'])) {
+            throw new InformationException('Order ID is required');
+        }
+
+        return (int) $data['order_id'];
     }
 
     private function requireClientId(): int
     {
-        $identity = $this->getIdentity();
-        if (!$identity instanceof \Box\Mod\Client\Entity\Client || $identity->getId() === null) {
-            throw new \FOSSBilling\Core\Exception\InformationException('Client authentication is required.', [], 403);
+        $clientId = RuntimeCompat::clientId($this->getIdentity());
+        if ($clientId === null) {
+            throw new InformationException('Client authentication is required.', [], 403);
         }
 
-        return (int) $identity->getId();
+        return $clientId;
     }
 
     private function saasService(): Service

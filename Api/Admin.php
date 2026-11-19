@@ -4,10 +4,12 @@ declare(strict_types=1);
 
 namespace Box\Mod\Servicesaas\Api;
 
+require_once dirname(__DIR__) . '/src/Compat.php';
+
 use Box\Mod\Servicesaas\Client\AppConfig;
+use Box\Mod\Servicesaas\Compat\AbstractApi;
+use Box\Mod\Servicesaas\Compat\InformationException;
 use Box\Mod\Servicesaas\Service;
-use FOSSBilling\Core\Api\AbstractApi;
-use FOSSBilling\Core\Validation\Api\RequiredParams;
 
 class Admin extends AbstractApi
 {
@@ -89,10 +91,12 @@ class Admin extends AbstractApi
      *
      * @return array<string, mixed>
      */
-    #[RequiredParams(['order_id' => 'Order ID is required'])]
     public function resync_order(array $data): array
     {
         $this->checkPermissions('servicesaas', 'manage');
+        if (empty($data['order_id'])) {
+            throw new InformationException('Order ID is required');
+        }
 
         return $this->saasService()->syncClaimForOrder((int) $data['order_id']);
     }
@@ -102,10 +106,12 @@ class Admin extends AbstractApi
      *
      * @return array<string, mixed>
      */
-    #[RequiredParams(['order_id' => 'Order ID is required'])]
     public function status(array $data): array
     {
         $this->checkPermissions('servicesaas', 'manage');
+        if (empty($data['order_id'])) {
+            throw new InformationException('Order ID is required');
+        }
 
         return $this->saasService()->getStatusForOrder((int) $data['order_id']);
     }

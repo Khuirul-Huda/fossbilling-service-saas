@@ -4,9 +4,7 @@ declare(strict_types=1);
 
 namespace Box\Mod\Servicesaas\Bridge;
 
-use Box\Mod\Invoice\Entity\Invoice;
-use Box\Mod\Invoice\Entity\PayGateway;
-use Box\Mod\Invoice\ServicePayGateway;
+use Box\Mod\Servicesaas\Compat\RuntimeCompat;
 use Box\Mod\Servicesaas\Service;
 
 /**
@@ -34,29 +32,29 @@ final class ManualPaymentHandler
             throw new \InvalidArgumentException('Invoice hash, gateway ID, and sender name are required.');
         }
 
-        $invoice = $this->di['em']->getRepository(Invoice::class)->findOneBy(['hash' => $invoiceHash]);
-        if (!$invoice instanceof Invoice || $invoice->getStatus() !== Invoice::STATUS_UNPAID) {
+        $invoice = InvoiceCompat::findByHash($this->di, $invoiceHash);
+        if ($invoice === null || !InvoiceCompat::isUnpaid($invoice)) {
             throw new \RuntimeException('Unpaid invoice was not found.');
         }
 
-        $gateway = $this->di['em']->getRepository(PayGateway::class)->find($gatewayId);
-        if (!$gateway instanceof PayGateway || !$gateway->isEnabled() || !ServicePayGateway::isManualApprovalGateway($gateway->getGateway())) {
+        if (!InvoiceCompat::isEnabledManualGateway($this->di, $gatewayId)) {
             throw new \RuntimeException('Selected payment gateway does not support manual confirmation.');
         }
 
-        $txnId = $this->resolveTxnId($post, (int) $invoice->getId());
+        $invoiceId = InvoiceCompat::id($invoice);
+        $txnId = $this->resolveTxnId($post, $invoiceId);
         $note = $this->formatNote($post);
 
         $this->di['mod_service']('invoice', 'transaction')->create([
-            'invoice_id' => (int) $invoice->getId(),
-            'gateway_id' => (int) $gateway->getId(),
+            'invoice_id' => $invoiceId,
+            'gateway_id' => $gatewayId,
             'txn_id' => $txnId,
             'note' => $note,
             'source' => 'manual_form',
             'post' => $post,
         ]);
 
-        $pendingReturnUrl = $this->saasService->resolveReturnRedirectForInvoiceId((int) $invoice->getId(), 'pending');
+        $pendingReturnUrl = $this->saasService->resolveReturnRedirectForInvoiceId($invoiceId, 'pending');
         $fallbackUrl = $this->buildInvoiceUrl($invoiceHash);
 
         return [
@@ -75,18 +73,18 @@ final class ManualPaymentHandler
             return $this->emptyReturnContext();
         }
 
-        $invoice = $this->di['em']->getRepository(Invoice::class)->findOneBy(['hash' => $cleanHash]);
-        if (!$invoice instanceof Invoice) {
+        $invoice = InvoiceCompat::findByHash($this->di, $cleanHash);
+        if ($invoice === null) {
             return $this->emptyReturnContext();
         }
 
-        $invoiceId = (int) $invoice->getId();
+        $invoiceId = InvoiceCompat::id($invoice);
         $returnUrl = $this->saasService->resolveReturnRedirectForInvoiceId($invoiceId, 'success');
         $pendingUrl = $this->saasService->resolveReturnRedirectForInvoiceId($invoiceId, 'pending');
 
         return [
             'is_saas' => $returnUrl !== null || $pendingUrl !== null,
-            'status' => strtolower((string) $invoice->getStatus()),
+            'status' => InvoiceCompat::status($invoice),
             'return_url' => $returnUrl,
             'pending_return_url' => $pendingUrl,
             'has_pending_manual_tx' => $this->hasPendingManualTransaction($invoiceId),
@@ -107,7 +105,7 @@ final class ManualPaymentHandler
 
     private function hasPendingManualTransaction(int $invoiceId): bool
     {
-        $conn = $this->di['em']->getConnection();
+        $conn = RuntimeCompat::dbal($this->di);
         if (!$conn->createSchemaManager()->tablesExist(['transaction', 'pay_gateway'])) {
             return false;
         }
@@ -119,7 +117,7 @@ final class ManualPaymentHandler
 
         foreach ($rows as $row) {
             $gwCode = (string) ($row['gateway'] ?? '');
-            if ($gwCode !== '' && ServicePayGateway::isManualApprovalGateway($gwCode)) {
+            if ($gwCode !== '' && RuntimeCompat::isManualApprovalGateway($gwCode)) {
                 return true;
             }
         }
