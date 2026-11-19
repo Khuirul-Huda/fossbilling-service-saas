@@ -11,7 +11,6 @@ use Box\Mod\Servicesaas\Bridge\UploadedFileHelper;
 use Box\Mod\Servicesaas\Service;
 use Doctrine\DBAL\DriverManager;
 use Pimple\Container;
-use Symfony\Component\HttpFoundation\File\UploadedFile;
 
 function makeTempProofDir(): string
 {
@@ -36,6 +35,18 @@ function makeTempFile(string $dir, string $name, string $bytes): string
     file_put_contents($path, $bytes);
 
     return $path;
+}
+
+/** @return array{error: int, tmp_name: string, name: string, size: int, _allow_local_copy: bool} */
+function makeUploadArray(string $path): array
+{
+    return [
+        'error' => UPLOAD_ERR_OK,
+        'tmp_name' => $path,
+        'name' => basename($path),
+        'size' => (int) filesize($path),
+        '_allow_local_copy' => true,
+    ];
 }
 
 function cleanDirRecursive(string $dir): void
@@ -63,15 +74,15 @@ it('validates MIME and size limits before storing private payment proof and purg
             ->toThrow(\InvalidArgumentException::class, 'wajib diunggah');
 
         $badText = makeTempFile($srcDir, 'fake.png', 'plain text not an image');
-        expect(fn (): array => $storage->storeUploadedProof(42, new UploadedFile($badText, 'fake.png', 'image/png', null, true)))
+        expect(fn (): array => $storage->storeUploadedProof(42, makeUploadArray($badText)))
             ->toThrow(\InvalidArgumentException::class, 'Format file');
 
         $oversized = makeTempFile($srcDir, 'big.pdf', "%PDF-1.4\n" . str_repeat('A', UploadedFileHelper::MAX_FILE_BYTES + 32));
-        expect(fn (): array => $storage->storeUploadedProof(42, new UploadedFile($oversized, 'big.pdf', 'application/pdf', null, true)))
+        expect(fn (): array => $storage->storeUploadedProof(42, makeUploadArray($oversized)))
             ->toThrow(\InvalidArgumentException::class, '5 MB');
 
         $validPng = makeSamplePngFile($srcDir);
-        $meta = $storage->storeUploadedProof(42, new UploadedFile($validPng, 'bukti.png', 'image/png', null, true));
+        $meta = $storage->storeUploadedProof(42, makeUploadArray($validPng));
 
         $loaded = $storage->readProof(42);
         expect($loaded)->not->toBeNull()
@@ -106,11 +117,11 @@ it('stores private QRIS fallback image and verifies HMAC signed URL params', fun
 
     try {
         $pdf = makeTempFile($srcDir, 'qris.pdf', "%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF");
-        expect(fn (): array => $store->store(new UploadedFile($pdf, 'qris.pdf', 'application/pdf', null, true)))
+        expect(fn (): array => $store->store(makeUploadArray($pdf)))
             ->toThrow(\InvalidArgumentException::class, 'Format file');
 
         $validPng = makeSamplePngFile($srcDir, 'qris.png');
-        $meta = $store->store(new UploadedFile($validPng, 'qris.png', 'image/png', null, true));
+        $meta = $store->store(makeUploadArray($validPng));
         expect($meta['filename'])->toBe('qris-fallback.png')
             ->and($store->read())->not->toBeNull();
 
@@ -140,7 +151,6 @@ it('enforces Antispam CAPTCHA, persists proof, and adds admin proof URL to Manua
         $dbal->insert('invoice', ['id' => 55, 'hash' => 'inv55hash', 'status' => 'unpaid', 'approved' => 0]);
         $dbal->insert('pay_gateway', ['id' => 7, 'gateway' => 'DummyManualGateway', 'enabled' => 1]);
 
-        // Load minimal manual gateway stub for RuntimeCompat::isManualApprovalGateway()
         if (!class_exists('Payment_Adapter_DummyManualGateway')) {
             eval('class Payment_Adapter_DummyManualGateway { public static function requiresManualApproval(): bool { return true; } }');
         }
@@ -151,6 +161,7 @@ it('enforces Antispam CAPTCHA, persists proof, and adds admin proof URL to Manua
             {
             }
 
+            /** @param array<string, mixed> $data */
             public function create(array $data): int
             {
                 $this->capturedTx = $data;
@@ -160,6 +171,7 @@ it('enforces Antispam CAPTCHA, persists proof, and adds admin proof URL to Manua
         };
 
         $antispamService = new class () {
+            /** @param array<string, mixed> $params */
             public function checkCaptcha(array $params): void
             {
                 if (($params['g-recaptcha-response'] ?? '') !== 'valid-token') {
@@ -205,11 +217,12 @@ it('enforces Antispam CAPTCHA, persists proof, and adds admin proof URL to Manua
                 return 'https://billing.test/admin/' . ltrim($path, '/');
             }
         };
-        $di['mod_service'] = $di->protect(static fn (string $name, ?string $sub = null): object => match (strtolower($name)) {
+        $modServiceResolver = static fn (string $name, ?string $sub = null): object => match (strtolower($name)) {
             'antispam' => $antispamService,
             'invoice' => $txService,
             default => throw new \RuntimeException('Unexpected service: ' . $name),
-        });
+        };
+        $di['mod_service'] = method_exists($di, 'protect') ? $di->protect($modServiceResolver) : $modServiceResolver;
 
         $saasService = new Service();
         $saasService->setDi($di);
@@ -231,7 +244,7 @@ it('enforces Antispam CAPTCHA, persists proof, and adds admin proof URL to Manua
             'payment_channel' => 'QRIS',
             'sender_name' => 'Budi Santoso',
             'g-recaptcha-response' => 'valid-token',
-        ], new UploadedFile($validPng, 'bukti.png', 'image/png', null, true));
+        ], makeUploadArray($validPng));
 
         expect($result['invoice_hash'])->toBe('inv55hash')
             ->and($result['redirect_url'])->toBe('https://billing.test/invoice/inv55hash')
