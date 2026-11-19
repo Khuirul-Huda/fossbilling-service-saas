@@ -199,7 +199,7 @@ final class DoctrineBillingHarness
             {
                 $cfg = is_array($data['config'] ?? null) ? $data['config'] : [];
                 $prodCfg = $product->getConfig() ?? [];
-                $period = (string) ($cfg['period'] ?? $prodCfg['period'] ?? '1M');
+                $period = (string) ($data['period'] ?? $cfg['period'] ?? $prodCfg['period'] ?? '1M');
                 $price = (string) ($prodCfg['price'] ?? '150000.00');
 
                 $order = (new Order())

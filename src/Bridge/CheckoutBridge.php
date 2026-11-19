@@ -298,9 +298,17 @@ final class CheckoutBridge
 
     private function findMatchingProduct(\Pimple\Container $di, string $appId, string $planId): Product
     {
-        foreach ($di['em']->getRepository(Product::class)->findBy(['type' => 'saas']) as $product) {
+        $products = $di['em']->getRepository(Product::class)->findBy(['type' => 'saas']);
+        foreach ($products as $product) {
             $config = $product->getConfig() ?? [];
-            if (($config['app_id'] ?? '') === $appId && ($config['plan_id'] ?? '') === $planId) {
+            if (($config['app_id'] ?? '') === $appId && PlanIdResolver::matchesProductExact($config, $planId)) {
+                return $product;
+            }
+        }
+
+        foreach ($products as $product) {
+            $config = $product->getConfig() ?? [];
+            if (($config['app_id'] ?? '') === $appId && PlanIdResolver::matchesProductFlexible($config, $planId)) {
                 return $product;
             }
         }

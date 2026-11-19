@@ -194,3 +194,36 @@ it('defers plan mutation on provisioned action=update until upgrade invoice is p
     expect($recordAfterPay?->planId)->toBe('100gb_monthly_v4')
         ->and($orderAfterUpdateReq?->getConfig()['pending_upgrade'] ?? null)->toBeNull();
 });
+
+it('matches single multi-period tier product for both monthly and yearly checkout requests', function (): void {
+    $harness = new DoctrineBillingHarness('https://api.cloudapp.test');
+    $product = $harness->seedSaasProduct('20gb_{period}_v4', 9900.0, '1M');
+    $product->setConfig([
+        'app_id' => 'cloudapp',
+        'plan_id' => '20gb_{period}_v4',
+        'plan_ids' => ['1M' => '20gb_monthly_v4', '1Y' => '20gb_yearly_v4'],
+        'plan_metadata' => ['storage_bytes' => 21_474_836_480],
+        'price' => 99000.0,
+    ]);
+    $harness->em->persist($product);
+    $harness->em->flush();
+
+    $registry = SaasTestContext::createRegistry('https://api.cloudapp.test');
+    $bridge = (new CheckoutBridge(new EncryptedChannel(), $registry, $harness->saasRepo))->setDi($harness->di);
+
+    $yearlyEnvelope = SaasTestContext::seal('cloudapp', [
+        'app_id' => 'cloudapp',
+        'action' => 'buy',
+        'email' => 'yearly4prod@example.com',
+        'external_user_id' => '4004',
+        'plan_id' => '20gb_yearly_v4',
+        'redirect_url' => 'https://app.cloudapp.test/gallery',
+    ]);
+    $resp = SaasTestContext::open($bridge->handleEncryptedRequest($yearlyEnvelope));
+
+    $order = $harness->em->getRepository(Order::class)->find((int) $resp['order_id']);
+    $record = $harness->saasRepo->findByOrderId((int) $resp['order_id']);
+
+    expect($order?->getPeriod())->toBe('1Y')
+        ->and($record?->planId)->toBe('20gb_yearly_v4');
+});

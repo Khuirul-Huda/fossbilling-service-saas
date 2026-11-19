@@ -27,8 +27,18 @@
 
             <div class="col-lg-6">
                 <label class="form-label required" for="saas-product-plan-id">{{ 'Remote Plan ID'|trans }}</label>
-                <input type="text" class="form-control" id="saas-product-plan-id" name="config[plan_id]" value="{{ config.plan_id|default('') }}" placeholder="ProPlan" required>
-                <div class="form-text">{{ 'Plan identifier expected by the target SaaS application (e.g. ProPlan, FamilyPlan).'|trans }}</div>
+                <input type="text" class="form-control" id="saas-product-plan-id" name="config[plan_id]" value="{{ config.plan_id|default('') }}" placeholder="20gb_{period}_v4" required>
+                <div class="form-text">{{ 'Plan identifier expected by the target SaaS application. Supports {period} (monthly/yearly) or per-period overrides below.'|trans }}</div>
+            </div>
+
+            <div class="col-lg-6">
+                <label class="form-label" for="saas-plan-id-1m">{{ 'Monthly Plan ID (1M, Optional)'|trans }}</label>
+                <input type="text" class="form-control" id="saas-plan-id-1m" name="config[plan_ids][1M]" value="{{ config.plan_ids['1M']|default('') }}" placeholder="20gb_monthly_v4">
+            </div>
+
+            <div class="col-lg-6">
+                <label class="form-label" for="saas-plan-id-1y">{{ 'Yearly Plan ID (1Y, Optional)'|trans }}</label>
+                <input type="text" class="form-control" id="saas-plan-id-1y" name="config[plan_ids][1Y]" value="{{ config.plan_ids['1Y']|default('') }}" placeholder="20gb_yearly_v4">
             </div>
 
             <div class="col-lg-6">

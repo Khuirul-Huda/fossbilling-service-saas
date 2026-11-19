@@ -12,6 +12,7 @@ use Box\Mod\Product\Entity\Product;
 use Box\Mod\Servicesaas\Bridge\CheckoutBridge;
 use Box\Mod\Servicesaas\Bridge\CheckoutOrderHelper;
 use Box\Mod\Servicesaas\Bridge\ManualPaymentHandler;
+use Box\Mod\Servicesaas\Bridge\PlanIdResolver;
 use Box\Mod\Servicesaas\Client\AppRegistry;
 use Box\Mod\Servicesaas\Client\ExpirationCalculator;
 use Box\Mod\Servicesaas\Client\ProvisioningClient;
@@ -350,11 +351,15 @@ class Service implements InjectionAwareInterface, WidgetProviderInterface
         }
         $rawId = $isEntity ? $order->getId() : ($order['id'] ?? $order['order_id'] ?? null);
         $rawExp = $isEntity ? $order->getExpiresAt()?->getTimestamp() : ($order['expires_at'] ?? null);
+        $period = $isEntity ? $order->getPeriod() : (isset($order['period']) && is_string($order['period']) ? $order['period'] : null);
+        if (($cfg['plan_id'] ?? '') !== '' || !empty($cfg['plan_ids'])) {
+            $cfg['plan_id'] = PlanIdResolver::resolveForPeriod($cfg, $period);
+        }
 
         return [
             'order_id' => $rawId !== null && $rawId !== '' ? (int) $rawId : null,
             'client_id' => $clientId,
-            'period' => $isEntity ? $order->getPeriod() : (isset($order['period']) && is_string($order['period']) ? $order['period'] : null),
+            'period' => $period,
             'expires_at' => is_int($rawExp) ? $rawExp : (is_string($rawExp) && $rawExp !== '' ? (strtotime($rawExp) ?: null) : null),
             'config' => $cfg,
         ];
