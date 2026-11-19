@@ -6,7 +6,6 @@ require_once dirname(__DIR__) . '/bootstrap.php';
 
 use Box\Mod\Servicesaas\Bridge\ManualPaymentHandler;
 use Box\Mod\Servicesaas\Bridge\ManualProofStorage;
-use Box\Mod\Servicesaas\Bridge\PrivateQrisStore;
 use Box\Mod\Servicesaas\Bridge\UploadedFileHelper;
 use Box\Mod\Servicesaas\Service;
 use Doctrine\DBAL\DriverManager;
@@ -104,35 +103,6 @@ it('validates MIME and size limits before storing private payment proof and purg
             ->and($storage->readProof(42))->toBeNull()
             ->and(is_file($loaded['path']))->toBeFalse()
             ->and($storage->findExistingProofsForOrder($dbal, 99))->toBe([]);
-    } finally {
-        cleanDirRecursive($dir);
-        cleanDirRecursive($srcDir);
-    }
-});
-
-it('stores private QRIS fallback image and verifies HMAC signed URL params', function (): void {
-    $dir = makeTempProofDir();
-    $srcDir = makeTempProofDir();
-    $store = new PrivateQrisStore($dir);
-
-    try {
-        $pdf = makeTempFile($srcDir, 'qris.pdf', "%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF");
-        expect(fn (): array => $store->store(makeUploadArray($pdf)))
-            ->toThrow(\InvalidArgumentException::class, 'Format file');
-
-        $validPng = makeSamplePngFile($srcDir, 'qris.png');
-        $meta = $store->store(makeUploadArray($validPng));
-        expect($meta['filename'])->toBe('qris-fallback.png')
-            ->and($store->read())->not->toBeNull();
-
-        $params = $store->signParams('invHash123', 3600);
-        expect($store->verifySignature($params['invoice'], $params['exp'], $params['sig']))->toBeTrue()
-            ->and($store->verifySignature('tampered', $params['exp'], $params['sig']))->toBeFalse()
-            ->and($store->verifySignature($params['invoice'], time() - 10, $params['sig']))->toBeFalse()
-            ->and($store->verifySignature($params['invoice'], $params['exp'], str_repeat('0', 64)))->toBeFalse();
-
-        $store->delete();
-        expect($store->read())->toBeNull();
     } finally {
         cleanDirRecursive($dir);
         cleanDirRecursive($srcDir);

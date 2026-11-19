@@ -14,7 +14,6 @@ use Box\Mod\Servicesaas\Bridge\CheckoutOrderHelper;
 use Box\Mod\Servicesaas\Bridge\ManualPaymentHandler;
 use Box\Mod\Servicesaas\Bridge\ManualProofStorage;
 use Box\Mod\Servicesaas\Bridge\PlanIdResolver;
-use Box\Mod\Servicesaas\Bridge\PrivateQrisStore;
 use Box\Mod\Servicesaas\Client\AppRegistry;
 use Box\Mod\Servicesaas\Client\ExpirationCalculator;
 use Box\Mod\Servicesaas\Client\ProvisioningClient;
@@ -34,7 +33,6 @@ class Service implements InjectionAwareInterface, WidgetProviderInterface
 
     protected ?\Pimple\Container $di = null;
     private ?ManualProofStorage $proofStorage = null;
-    private ?PrivateQrisStore $privateQrisStore = null;
 
     public function __construct(
         private ?ServiceSaasRepository $repository = null,
@@ -177,31 +175,6 @@ class Service implements InjectionAwareInterface, WidgetProviderInterface
     public function setProofStorage(ManualProofStorage $proofStorage): void
     {
         $this->proofStorage = $proofStorage;
-    }
-
-    public function getPrivateQrisStore(): PrivateQrisStore
-    {
-        return $this->privateQrisStore ??= new PrivateQrisStore();
-    }
-
-    public function setPrivateQrisStore(PrivateQrisStore $privateQrisStore): void
-    {
-        $this->privateQrisStore = $privateQrisStore;
-    }
-
-    public function getSignedQrisFallbackUrl(string $invoiceHash): string
-    {
-        $store = $this->getPrivateQrisStore();
-        if ($invoiceHash === '' || $store->read() === null) {
-            return '';
-        }
-
-        $params = $store->signParams($invoiceHash);
-        if ($this->di !== null && isset($this->di['url'])) {
-            return (string) $this->di['url']->link('servicesaas/qris-image', $params);
-        }
-
-        return '/servicesaas/qris-image?' . http_build_query($params);
     }
 
     /** @return array<string, mixed> */

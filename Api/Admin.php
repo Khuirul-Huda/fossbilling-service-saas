@@ -116,28 +116,6 @@ class Admin extends AbstractApi
         return $this->saasService()->getStatusForOrder((int) $data['order_id']);
     }
 
-    /**
-     * @param array<string, mixed> $data
-     *
-     * @return array<string, mixed>
-     */
-    public function qris_fallback_status(array $data): array
-    {
-        $this->checkPermissions('servicesaas', 'manage');
-        $stored = $this->saasService()->getPrivateQrisStore()->read();
-        if ($stored === null) {
-            return ['configured' => false];
-        }
-
-        return [
-            'configured' => true,
-            'filename' => $stored['filename'],
-            'mime' => $stored['mime'],
-            'size' => $stored['size'],
-            'uploaded_at' => $stored['uploaded_at'],
-        ];
-    }
-
     /** @param array<string, mixed> $apps */
     private function persistApps(object $extensionService, array $apps, Service $service): bool
     {

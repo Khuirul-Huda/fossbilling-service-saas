@@ -35,7 +35,6 @@ class Client implements InjectionAwareInterface
     {
         $app->get('/servicesaas/return/:order_id', 'get_return', ['order_id' => '[0-9]+'], static::class);
         $app->get('/servicesaas/portal', 'get_portal', [], static::class);
-        $app->get('/servicesaas/qris-image', 'get_qris_image', [], static::class);
         $app->post('/servicesaas/manual-confirm', 'post_manual_confirm', [], static::class);
     }
 
@@ -84,31 +83,6 @@ class Client implements InjectionAwareInterface
         }
 
         return $app->redirect($target['redirect_path']);
-    }
-
-    public function get_qris_image(mixed $app): Response
-    {
-        $service = $this->di['mod_service']('servicesaas');
-        if (!$service instanceof Service) {
-            return RuntimeCompat::htmlResponse('', self::HTTP_NOT_FOUND);
-        }
-
-        $query = $this->resolveRequest($app)->query;
-        $invoiceHash = (string) $query->get('invoice', '');
-        $exp = (int) $query->get('exp', 0);
-        $sig = (string) $query->get('sig', '');
-
-        $store = $service->getPrivateQrisStore();
-        if (!$store->verifySignature($invoiceHash, $exp, $sig)) {
-            return RuntimeCompat::htmlResponse('Invalid or expired QRIS link.', self::HTTP_FORBIDDEN);
-        }
-
-        $file = $store->read();
-        if ($file === null) {
-            return RuntimeCompat::htmlResponse('Fallback QRIS image not configured.', self::HTTP_NOT_FOUND);
-        }
-
-        return RuntimeCompat::binaryResponse($file['path'], $file['mime'], $file['filename']);
     }
 
     public function post_manual_confirm(mixed $app): Response
