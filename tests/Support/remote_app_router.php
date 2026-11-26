@@ -22,6 +22,7 @@ if ($dbPath === '') {
 $pdo = new \PDO('sqlite:' . $dbPath);
 $pdo->setAttribute(\PDO::ATTR_ERRMODE, \PDO::ERRMODE_EXCEPTION);
 $pdo->exec('CREATE TABLE IF NOT EXISTS app_users (id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT UNIQUE NOT NULL, plan_id TEXT NOT NULL, storage_bytes INTEGER NOT NULL, expiry_micro INTEGER NOT NULL, ext_tx_id TEXT NOT NULL, provider TEXT NOT NULL)');
+$pdo->exec('CREATE TABLE IF NOT EXISTS app_events (id INTEGER PRIMARY KEY AUTOINCREMENT, action TEXT NOT NULL, payload_json TEXT NOT NULL)');
 
 $channel = new EncryptedChannel();
 $path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
@@ -68,6 +69,17 @@ if ($method === 'POST' && $path === '/_test/users') {
 if ($method === 'GET' && preg_match('#^/_test/subscription/(\d+)$#', $path, $matches) === 1) {
     $user = findRemoteUser($pdo, '', (int) $matches[1]);
     respondJson($user !== null ? 200 : 404, $user ?? ['error' => 'Not found']);
+
+    return;
+}
+
+if ($method === 'GET' && $path === '/_test/events') {
+    $rows = $pdo->query('SELECT action, payload_json FROM app_events ORDER BY id ASC')->fetchAll(\PDO::FETCH_ASSOC);
+    $events = array_map(static fn (array $r): array => [
+        'action' => (string) $r['action'],
+        'payload' => json_decode((string) $r['payload_json'], true) ?: [],
+    ], is_array($rows) ? $rows : []);
+    respondJson(200, ['events' => $events]);
 
     return;
 }
@@ -135,6 +147,8 @@ if ($method === 'POST' && $path === '/billing/notify/fossbilling') {
 
     $action = (string) ($cmd['action'] ?? '');
     $orderId = (int) ($cmd['order_id'] ?? 0);
+    $evStmt = $pdo->prepare('INSERT INTO app_events (action, payload_json) VALUES (:action, :payload)');
+    $evStmt->execute(['action' => $action, 'payload' => json_encode($cmd, JSON_THROW_ON_ERROR)]);
     if ($action === 'suspend' || $action === 'cancel') {
         $upd = $pdo->prepare('UPDATE app_users SET plan_id = :plan, storage_bytes = 0, expiry_micro = 0, ext_tx_id = :tx, provider = :prov WHERE id = :id');
         $upd->execute(['plan' => 'free', 'tx' => 'none', 'prov' => '', 'id' => (int) $user['id']]);

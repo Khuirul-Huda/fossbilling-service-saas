@@ -53,7 +53,8 @@ final class CheckoutBridge
         $request = CheckoutRequest::fromDecryptedPayload($this->channel->open($envelope, $appConfig->sharedSecret));
         $this->assertValidTarget($envelope, $request, $appConfig);
 
-        $existing = $this->findActiveRecord($request);
+        $isStandalone = $this->isStandaloneCheckout($request);
+        $existing = $isStandalone ? null : $this->findActiveRecord($request);
         if ($existing !== null) {
             $existing = $this->updateExistingRecord($existing, $request);
         }
@@ -89,16 +90,37 @@ final class CheckoutBridge
         }
     }
 
+    private function isStandaloneCheckout(CheckoutRequest $request): bool
+    {
+        $metaType = strtolower(trim((string) ($request->planMetadata['item_type'] ?? $request->planMetadata['kind'] ?? '')));
+        if (in_array($metaType, [CatalogItemSpec::KIND_ADDON, CatalogItemSpec::KIND_TOPUP, CatalogItemSpec::KIND_OVERAGE], true)) {
+            return true;
+        }
+
+        if ($this->di === null) {
+            return false;
+        }
+
+        try {
+            $product = $this->findMatchingProduct($this->di, $request->appId, $request->planId);
+            $kind = strtolower(trim((string) (($product->getConfig() ?? [])['kind'] ?? CatalogItemSpec::KIND_PLAN)));
+
+            return in_array($kind, [CatalogItemSpec::KIND_ADDON, CatalogItemSpec::KIND_TOPUP, CatalogItemSpec::KIND_OVERAGE], true);
+        } catch (\Throwable) {
+            return false;
+        }
+    }
+
     private function findActiveRecord(CheckoutRequest $request): ?ServiceSaasRecord
     {
         if ($request->externalUserId !== '') {
-            $byExternal = $this->repository->findByExternalUserId($request->appId, $request->externalUserId);
+            $byExternal = $this->repository->findActiveSubscriptionByExternalUserId($request->appId, $request->externalUserId);
             if ($this->isActiveOrderRecord($byExternal)) {
                 return $byExternal;
             }
         }
 
-        $byEmail = $this->repository->findPendingOrActiveByEmail($request->appId, $request->email);
+        $byEmail = $this->repository->findActiveSubscriptionByEmail($request->appId, $request->email);
 
         return $this->isActiveOrderRecord($byEmail) ? $byEmail : null;
     }
@@ -204,17 +226,17 @@ final class CheckoutBridge
 
         $client = $this->findOrCreateClient($di, (string) $payload['email']);
         $product = $this->findMatchingProduct($di, (string) $payload['app_id'], (string) $payload['plan_id']);
-        $period = $this->orderHelper->resolvePeriodCode(
-            $product,
-            (string) $payload['plan_id'],
-            is_array($payload['plan_metadata'] ?? null) ? $payload['plan_metadata'] : [],
-        );
+        $payload['currency'] = $client->getCurrency() ?: 'IDR';
+        $target = $this->orderHelper->resolveTargetPlanDetails($di, $product, $payload);
         $createParams = [
             'invoice_option' => 'issue-invoice',
             'config' => $orderConfig,
         ];
-        if ($period !== null) {
-            $createParams['period'] = $period;
+        if ($target['period'] !== null) {
+            $createParams['period'] = $target['period'];
+        }
+        if ($target['dynamic_amount']) {
+            $createParams['price'] = $target['price'];
         }
         $orderId = (int) $di['mod_service']('order')->createOrder($client, $product, $createParams);
         $order = $di['em']->getRepository(Order::class)->find($orderId)

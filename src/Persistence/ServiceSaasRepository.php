@@ -113,32 +113,86 @@ final class ServiceSaasRepository
         $sql = 'SELECT * FROM ' . SaasSchemaManager::TABLE_NAME
             . ' WHERE app_id = :app_id AND LOWER(target_email) = :email'
             . ' AND provisioning_status IN (:pending_status, :active_status)'
-            . ' ORDER BY CASE WHEN provisioning_status = :pending_status THEN 0 ELSE 1 END, id DESC LIMIT 1';
+            . ' ORDER BY CASE WHEN provisioning_status = :pending_status THEN 0 ELSE 1 END, id DESC';
 
-        $row = $this->connection->fetchAssociative($sql, [
+        $rows = $this->connection->fetchAllAssociative($sql, [
             'app_id' => $appId,
             'email' => $normalizedEmail,
             'pending_status' => ServiceSaasRecord::STATUS_PENDING_CLAIM,
             'active_status' => ServiceSaasRecord::STATUS_PROVISIONED,
         ]);
 
-        return is_array($row) ? ServiceSaasRecord::fromRow($row) : null;
+        return $this->pickFirstRecord($rows);
     }
 
     public function findByExternalUserId(string $appId, string $externalUserId): ?ServiceSaasRecord
     {
         $this->schemaManager->ensureTableExists();
 
-        $row = $this->connection->fetchAssociative(
+        $rows = $this->connection->fetchAllAssociative(
             'SELECT * FROM ' . SaasSchemaManager::TABLE_NAME
-            . ' WHERE app_id = :app_id AND external_user_id = :external_user_id ORDER BY id DESC LIMIT 1',
+            . ' WHERE app_id = :app_id AND external_user_id = :external_user_id ORDER BY id DESC',
             [
                 'app_id' => $appId,
                 'external_user_id' => $externalUserId,
             ],
         );
 
-        return is_array($row) ? ServiceSaasRecord::fromRow($row) : null;
+        return $this->pickFirstRecord($rows);
+    }
+
+    public function findActiveSubscriptionByEmail(string $appId, string $email): ?ServiceSaasRecord
+    {
+        $this->schemaManager->ensureTableExists();
+        $sql = 'SELECT * FROM ' . SaasSchemaManager::TABLE_NAME
+            . ' WHERE app_id = :app_id AND LOWER(target_email) = :email'
+            . ' AND provisioning_status IN (:pending_status, :active_status)'
+            . ' ORDER BY CASE WHEN provisioning_status = :pending_status THEN 0 ELSE 1 END, id DESC';
+
+        $rows = $this->connection->fetchAllAssociative($sql, [
+            'app_id' => $appId,
+            'email' => strtolower(trim($email)),
+            'pending_status' => ServiceSaasRecord::STATUS_PENDING_CLAIM,
+            'active_status' => ServiceSaasRecord::STATUS_PROVISIONED,
+        ]);
+
+        return $this->pickFirstSubscriptionRecord($rows);
+    }
+
+    public function findActiveSubscriptionByExternalUserId(string $appId, string $externalUserId): ?ServiceSaasRecord
+    {
+        $this->schemaManager->ensureTableExists();
+        $rows = $this->connection->fetchAllAssociative(
+            'SELECT * FROM ' . SaasSchemaManager::TABLE_NAME
+            . ' WHERE app_id = :app_id AND external_user_id = :external_user_id ORDER BY id DESC',
+            ['app_id' => $appId, 'external_user_id' => $externalUserId],
+        );
+
+        return $this->pickFirstSubscriptionRecord($rows);
+    }
+
+    /**
+     * @param list<array<string, mixed>> $rows
+     */
+    private function pickFirstRecord(array $rows): ?ServiceSaasRecord
+    {
+        return $rows !== [] ? ServiceSaasRecord::fromRow($rows[0]) : null;
+    }
+
+    /**
+     * @param list<array<string, mixed>> $rows
+     */
+    private function pickFirstSubscriptionRecord(array $rows): ?ServiceSaasRecord
+    {
+        foreach ($rows as $row) {
+            $record = ServiceSaasRecord::fromRow($row);
+            $itemType = strtolower((string) ($record->planMetadata['item_type'] ?? $record->planMetadata['kind'] ?? 'plan'));
+            if (!in_array($itemType, ['addon', 'topup', 'overage'], true)) {
+                return $record;
+            }
+        }
+
+        return null;
     }
 
     public function deleteById(int $id): void

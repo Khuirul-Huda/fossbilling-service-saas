@@ -255,15 +255,44 @@ class Service implements InjectionAwareInterface, WidgetProviderInterface
         if (in_array($action, ['activate', 'renew', 'uncancel'], true)) {
             $ctx = $this->promotePendingUpgradeIfPresent($order, $ctx);
         }
-        $calc = new ExpirationCalculator();
-        $logic = $this->di !== null ? (string) ($this->di['mod_config']('order')['order_renewal_logic'] ?? ExpirationCalculator::LOGIC_FROM_GREATER) : ExpirationCalculator::LOGIC_FROM_GREATER;
-        $exp = match ($action) {
-            'renew' => $calc->calculateForRenewal($ctx['period'], $ctx['expires_at'], $logic),
-            'unsuspend' => ($ctx['expires_at'] !== null && $ctx['expires_at'] > time()) ? $ctx['expires_at'] : $calc->calculateForActivation($ctx['period']),
-            default => $calc->calculateForActivation($ctx['period']),
-        };
+        $resolvedAction = $this->resolveWebhookAction($ctx, $action);
+        $isOneTime = $resolvedAction === 'invoice_paid'
+            || strtolower(trim((string) ($ctx['period'] ?? ''))) === 'once';
 
-        return $this->dispatchProvisioning($ctx, ['action' => $action, 'expires_at_micro' => ExpirationCalculator::toMicroseconds($exp)]);
+        $expiresAtMicro = null;
+        if (!$isOneTime) {
+            $calc = new ExpirationCalculator();
+            $logic = $this->di !== null ? (string) ($this->di['mod_config']('order')['order_renewal_logic'] ?? ExpirationCalculator::LOGIC_FROM_GREATER) : ExpirationCalculator::LOGIC_FROM_GREATER;
+            $exp = match ($action) {
+                'renew' => $calc->calculateForRenewal($ctx['period'], $ctx['expires_at'], $logic),
+                'unsuspend' => ($ctx['expires_at'] !== null && $ctx['expires_at'] > time()) ? $ctx['expires_at'] : $calc->calculateForActivation($ctx['period']),
+                default => $calc->calculateForActivation($ctx['period']),
+            };
+            $expiresAtMicro = ExpirationCalculator::toMicroseconds($exp);
+        }
+
+        return $this->dispatchProvisioning($ctx, [
+            'action' => $resolvedAction,
+            'expires_at_micro' => $expiresAtMicro,
+        ]);
+    }
+
+    /** @param array{config: array<string, mixed>} $ctx */
+    private function resolveWebhookAction(array $ctx, string $action): string
+    {
+        if ($action !== 'activate') {
+            return $action;
+        }
+
+        $cfg = $ctx['config'];
+        $meta = is_array($cfg['plan_metadata'] ?? null) ? $cfg['plan_metadata'] : [];
+        $kind = strtolower(trim((string) ($cfg['kind'] ?? $meta['item_type'] ?? 'plan')));
+
+        return match ($kind) {
+            'addon' => 'addon_activate',
+            'topup', 'overage' => 'invoice_paid',
+            default => 'activate',
+        };
     }
 
     /**

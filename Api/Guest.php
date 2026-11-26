@@ -7,6 +7,7 @@ namespace Box\Mod\Servicesaas\Api;
 require_once dirname(__DIR__) . '/src/Compat.php';
 
 use Box\Mod\Servicesaas\Bridge\AccountEventSync;
+use Box\Mod\Servicesaas\Bridge\CatalogSyncBridge;
 use Box\Mod\Servicesaas\Bridge\CheckoutBridge;
 use Box\Mod\Servicesaas\Bridge\EntitlementClaimer;
 use Box\Mod\Servicesaas\Compat\AbstractApi;
@@ -58,6 +59,20 @@ class Guest extends AbstractApi
         $sync = new AccountEventSync(EncryptedChannel::persistent(), $service->getAppRegistry(), $service->getRepository());
 
         return $sync->handleEncryptedEvent($this->extractEnvelope($data));
+    }
+
+    /**
+     * @param array<string, mixed> $data
+     *
+     * @return array{v: int, app_id: string, nonce: string, payload: string}
+     */
+    public function sync_catalog(array $data): array
+    {
+        $service = $this->saasService();
+        $em = $this->di['em'] ?? throw new \RuntimeException('EntityManager is required for catalog synchronization.');
+        $bridge = new CatalogSyncBridge(EncryptedChannel::persistent(), $service->getAppRegistry(), $em);
+
+        return $bridge->handleEncryptedRequest($this->extractEnvelope($data));
     }
 
     /**

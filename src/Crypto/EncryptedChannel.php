@@ -24,6 +24,11 @@ final class EncryptedChannel
         return new self(ReplayGuard::persistent());
     }
 
+    public static function generateHexSecret(): string
+    {
+        return bin2hex(random_bytes(self::SECRET_KEY_BYTES));
+    }
+
     public static function normalizeSecretKey(string $secret): string
     {
         if (strlen($secret) === self::SECRET_KEY_BYTES) {

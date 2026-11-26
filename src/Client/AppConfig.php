@@ -22,6 +22,8 @@ final readonly class AppConfig
     /** @var list<string> */
     public array $allowedCustomSchemes;
 
+    public bool $allowCatalogSync;
+
     /**
      * @param string|array<string, mixed> $appIdOrData
      */
@@ -41,6 +43,7 @@ final readonly class AppConfig
         $this->sharedSecret = $parsed['shared_secret'];
         $this->allowedRedirectHosts = $parsed['allowed_redirect_hosts'];
         $this->allowedCustomSchemes = $parsed['allowed_custom_schemes'];
+        $this->allowCatalogSync = $parsed['allow_catalog_sync'];
     }
 
     /**
@@ -112,7 +115,8 @@ final readonly class AppConfig
      *     webhook_path: string,
      *     shared_secret: string,
      *     allowed_redirect_hosts: list<string>,
-     *     allowed_custom_schemes: list<string>
+     *     allowed_custom_schemes: list<string>,
+     *     allow_catalog_sync: bool
      * }
      */
     private static function normalizeInputArray(array $data): array
@@ -138,6 +142,9 @@ final readonly class AppConfig
             $data['allowed_custom_schemes'] ?? $data['allowedCustomSchemes'] ?? self::DEFAULT_CUSTOM_SCHEMES,
         );
 
+        $rawSyncFlag = $data['allow_catalog_sync'] ?? $data['allowCatalogSync'] ?? true;
+        $allowCatalogSync = filter_var($rawSyncFlag, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE) ?? true;
+
         return [
             'app_id' => $appId,
             'name' => $name !== '' ? $name : $appId,
@@ -146,6 +153,7 @@ final readonly class AppConfig
             'shared_secret' => $sharedSecret,
             'allowed_redirect_hosts' => $hosts,
             'allowed_custom_schemes' => $schemes !== [] ? $schemes : self::DEFAULT_CUSTOM_SCHEMES,
+            'allow_catalog_sync' => $allowCatalogSync,
         ];
     }
 
@@ -159,7 +167,8 @@ final readonly class AppConfig
      *     webhook_path: string,
      *     shared_secret: string,
      *     allowed_redirect_hosts: list<string>,
-     *     allowed_custom_schemes: list<string>
+     *     allowed_custom_schemes: list<string>,
+     *     allow_catalog_sync: bool
      * }
      */
     private static function normalizePositionalArgs(array $args, string $name, string $baseUrl): array
@@ -172,6 +181,7 @@ final readonly class AppConfig
             'shared_secret' => $args[4] ?? '',
             'allowed_redirect_hosts' => $args[5] ?? [],
             'allowed_custom_schemes' => $args[6] ?? self::DEFAULT_CUSTOM_SCHEMES,
+            'allow_catalog_sync' => $args[7] ?? true,
         ]);
     }
 

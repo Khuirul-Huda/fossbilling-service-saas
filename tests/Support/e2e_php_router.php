@@ -43,9 +43,11 @@ $payload = is_array($decoded) ? $decoded : [];
 
 try {
     $result = match ($path) {
+        '/api/guest/servicesaas/sync_catalog' => $guestApi->sync_catalog($payload),
         '/api/guest/servicesaas/checkout_session' => $guestApi->checkout_session($payload),
         '/api/guest/servicesaas/claim_entitlement' => $guestApi->claim_entitlement($payload),
         '/api/guest/servicesaas/account_event' => $guestApi->account_event($payload),
+        '/api/guest/servicesaas/invoice_return' => $guestApi->invoice_return($payload),
         default => throw new \RuntimeException('Unknown route: ' . $path, 404),
     };
     echo json_encode(['result' => $result], JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);

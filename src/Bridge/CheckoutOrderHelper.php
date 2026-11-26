@@ -36,7 +36,7 @@ final class CheckoutOrderHelper
     }
 
     /**
-     * @return array{product_id: int, plan_id: string, title: string, price: float, period: ?string, plan_metadata: array<string, mixed>}
+     * @return array{product_id: int, plan_id: string, title: string, price: float, period: ?string, plan_metadata: array<string, mixed>, dynamic_amount: bool}
      */
     public function resolveTargetPlanDetails(
         \Pimple\Container $di,
@@ -46,8 +46,11 @@ final class CheckoutOrderHelper
         $planId = (string) $payload['plan_id'];
         $planMeta = is_array($payload['plan_metadata'] ?? null) ? $payload['plan_metadata'] : [];
         $period = $this->resolvePeriodCode($product, $planId, $planMeta);
+        $isDynamic = $this->isDynamicAmountProduct($product);
         $currencyCode = (string) ($payload['currency'] ?? 'IDR');
-        $price = $this->computeProductPrice($di, $product, $currencyCode, $period);
+        $price = $isDynamic
+            ? $this->resolveDynamicAmount($payload, $planMeta)
+            : $this->computeProductPrice($di, $product, $currencyCode, $period);
 
         return [
             'product_id' => (int) $product->getId(),
@@ -56,7 +59,33 @@ final class CheckoutOrderHelper
             'price' => $price,
             'period' => $period,
             'plan_metadata' => $planMeta,
+            'dynamic_amount' => $isDynamic,
         ];
+    }
+
+    public function isDynamicAmountProduct(Product $product): bool
+    {
+        $config = $product->getConfig() ?? [];
+
+        return ($config['pricing_mode'] ?? CatalogItemSpec::PRICING_FIXED) === CatalogItemSpec::PRICING_DYNAMIC_AMOUNT;
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     * @param array<string, mixed> $planMeta
+     */
+    private function resolveDynamicAmount(array $payload, array $planMeta): float
+    {
+        $raw = $planMeta['amount_idr'] ?? $planMeta['amount'] ?? $payload['amount_idr'] ?? $payload['amount'] ?? null;
+        if (!is_numeric($raw)) {
+            throw new \InvalidArgumentException('Dynamic amount checkout requires a positive numeric amount.');
+        }
+        $amount = (float) $raw;
+        if (!is_finite($amount) || $amount <= 0.0) {
+            throw new \InvalidArgumentException('Dynamic amount checkout requires a finite amount greater than zero.');
+        }
+
+        return round($amount, 2);
     }
 
     /**
@@ -237,6 +266,7 @@ final class CheckoutOrderHelper
         $trimmed = strtolower(trim($raw));
 
         return match ($trimmed) {
+            'once', 'one-time', 'onetime' => null,
             'month', 'monthly', '1m' => '1M',
             'year', 'yearly', 'annual', '1y' => '1Y',
             default => preg_match('/^\d+[DWMY]$/i', $trimmed) === 1 ? strtoupper($trimmed) : null,

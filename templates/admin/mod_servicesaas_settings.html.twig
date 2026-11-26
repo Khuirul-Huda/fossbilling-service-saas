@@ -52,7 +52,12 @@
                 </div>
                 <div class="col-lg-4">
                     <label class="form-label" for="saas-shared-secret">{{ 'Shared Secret (32-byte base64 or 64-char hex)'|trans }}</label>
-                    <input type="password" class="form-control" id="saas-shared-secret" name="shared_secret" autocomplete="new-password" placeholder="{{ 'Leave blank when editing to keep existing secret'|trans }}">
+                    <div class="input-group">
+                        <input type="password" class="form-control font-monospace" id="saas-shared-secret" name="shared_secret" autocomplete="new-password" placeholder="{{ 'Auto-generated if left blank on new app'|trans }}">
+                        <button type="button" class="btn btn-outline-secondary" id="saas-toggle-secret" title="{{ 'Show or hide secret'|trans }}">{{ 'Show'|trans }}</button>
+                        <button type="button" class="btn btn-outline-primary" id="saas-generate-secret" title="{{ 'Auto-generate 64-char hex secret'|trans }}">{{ 'Generate'|trans }}</button>
+                    </div>
+                    <div class="form-text">{{ 'Leave blank on new app to auto-generate, or click Generate to copy into your app.'|trans }}</div>
                 </div>
                 <div class="col-lg-4">
                     <label class="form-label" for="saas-allowed-hosts">{{ 'Allowed Redirect Hosts'|trans }}</label>
@@ -61,6 +66,13 @@
                 <div class="col-lg-4">
                     <label class="form-label" for="saas-allowed-schemes">{{ 'Allowed Custom Schemes'|trans }}</label>
                     <input type="text" class="form-control" id="saas-allowed-schemes" name="allowed_custom_schemes" placeholder="myapp">
+                </div>
+                <div class="col-12">
+                    <input type="hidden" name="allow_catalog_sync" value="0">
+                    <label class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" id="saas-allow-catalog-sync" name="allow_catalog_sync" value="1" checked>
+                        <span class="form-check-label">{{ 'Allow encrypted automated catalog & pricing sync (sync_catalog)'|trans }}</span>
+                    </label>
                 </div>
             </div>
             <div class="d-flex justify-content-end gap-2 mt-4">
@@ -100,6 +112,11 @@
                         <td class="small">{{ app.allowed_custom_schemes|default('-') }}</td>
                         <td class="text-end text-nowrap">
                             <button type="button"
+                                    class="btn btn-sm btn-outline-secondary me-1 js-copy-pairing"
+                                    data-app-id="{{ app.app_id|e('html_attr') }}">
+                                {{ 'Copy Pairing'|trans }}
+                            </button>
+                            <button type="button"
                                     class="btn btn-sm btn-outline-primary me-1 js-edit-saas-app"
                                     data-app="{{ app|json_encode|e('html_attr') }}">
                                 {{ 'Edit'|trans }}
@@ -123,6 +140,29 @@
 
 <script>
 document.addEventListener('DOMContentLoaded', function() {
+    const secretInput = document.getElementById('saas-shared-secret');
+    const toggleBtn = document.getElementById('saas-toggle-secret');
+    const generateBtn = document.getElementById('saas-generate-secret');
+    const syncCheckbox = document.getElementById('saas-allow-catalog-sync');
+
+    if (toggleBtn && secretInput) {
+        toggleBtn.addEventListener('click', function() {
+            const isHidden = secretInput.type === 'password';
+            secretInput.type = isHidden ? 'text' : 'password';
+            toggleBtn.textContent = isHidden ? 'Hide' : 'Show';
+        });
+    }
+
+    if (generateBtn && secretInput) {
+        generateBtn.addEventListener('click', function() {
+            const bytes = new Uint8Array(32);
+            window.crypto.getRandomValues(bytes);
+            secretInput.value = Array.from(bytes, function(b) { return b.toString(16).padStart(2, '0'); }).join('');
+            secretInput.type = 'text';
+            if (toggleBtn) toggleBtn.textContent = 'Hide';
+        });
+    }
+
     document.querySelectorAll('.js-edit-saas-app').forEach(function(button) {
         button.addEventListener('click', function() {
             const app = JSON.parse(button.getAttribute('data-app') || '{}');
@@ -130,9 +170,32 @@ document.addEventListener('DOMContentLoaded', function() {
             document.getElementById('saas-app-name').value = app.name || '';
             document.getElementById('saas-base-url').value = app.base_url || '';
             document.getElementById('saas-webhook-path').value = app.webhook_path || '/billing/notify/fossbilling';
-            document.getElementById('saas-shared-secret').value = '';
+            if (secretInput) secretInput.value = '';
             document.getElementById('saas-allowed-hosts').value = app.allowed_redirect_hosts || '';
             document.getElementById('saas-allowed-schemes').value = app.allowed_custom_schemes || '';
+            if (syncCheckbox) syncCheckbox.checked = app.allow_catalog_sync !== false;
+        });
+    });
+
+    document.querySelectorAll('.js-copy-pairing').forEach(function(button) {
+        button.addEventListener('click', async function() {
+            const appId = button.getAttribute('data-app-id') || '';
+            const original = button.textContent;
+            try {
+                const res = await fetch("{{ 'servicesaas/pairing_config'|api_url }}", {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ app_id: appId })
+                });
+                const json = await res.json();
+                const pairing = (json && json.result && json.result.pairing_json) || '';
+                if (!pairing) throw new Error('Pairing payload unavailable');
+                await navigator.clipboard.writeText(pairing);
+                button.textContent = 'Copied!';
+                setTimeout(function() { button.textContent = original; }, 2000);
+            } catch (err) {
+                alert('Failed to export pairing config: ' + (err && err.message ? err.message : err));
+            }
         });
     });
 });

@@ -14,6 +14,7 @@ use Box\Mod\Order\Entity\Order;
 use Box\Mod\Product\Entity\Product;
 use Box\Mod\Product\Entity\ProductCategory;
 use Box\Mod\Product\Entity\ProductPayment;
+use Box\Mod\Product\Entity\ProductPaymentPeriod;
 use Box\Mod\Servicesaas\Client\ProvisioningClient;
 use Box\Mod\Servicesaas\Crypto\EncryptedChannel;
 use Box\Mod\Servicesaas\Persistence\SaasSchemaManager;
@@ -44,6 +45,7 @@ final class DoctrineBillingHarness
         Product::class,
         ProductCategory::class,
         ProductPayment::class,
+        ProductPaymentPeriod::class,
         Order::class,
         Invoice::class,
         PayGateway::class,
@@ -200,7 +202,9 @@ final class DoctrineBillingHarness
                 $cfg = is_array($data['config'] ?? null) ? $data['config'] : [];
                 $prodCfg = $product->getConfig() ?? [];
                 $period = (string) ($data['period'] ?? $cfg['period'] ?? $prodCfg['period'] ?? '1M');
-                $price = (string) ($prodCfg['price'] ?? '150000.00');
+                $price = isset($data['price'])
+                    ? sprintf('%.2f', (float) $data['price'])
+                    : $this->resolveProductPrice($product, $period, $prodCfg);
 
                 $order = (new Order())
                     ->setClientId((int) $client->getId())
@@ -227,6 +231,26 @@ final class DoctrineBillingHarness
             {
                 $order->setUnpaidInvoiceId((int) $invoice->getId());
                 $this->h->em->flush();
+            }
+
+            /** @param array<string, mixed> $prodCfg */
+            private function resolveProductPrice(Product $product, string $period, array $prodCfg): string
+            {
+                $pp = $product->getProductPayment();
+                if ($pp instanceof ProductPayment) {
+                    if ($pp->getType() === ProductPayment::FREE) {
+                        return '0.00';
+                    }
+                    if ($pp->getType() === ProductPayment::ONCE) {
+                        return sprintf('%.2f', $pp->getOncePrice());
+                    }
+                    $periodEntity = $pp->getPeriod($period);
+                    if ($periodEntity !== null && $periodEntity->isEnabled()) {
+                        return sprintf('%.2f', $periodEntity->getPrice());
+                    }
+                }
+
+                return sprintf('%.2f', (float) ($prodCfg['price'] ?? 150000.0));
             }
         };
     }

@@ -63,6 +63,14 @@ final class RemoteAppServerProcess
         return $this->requestJson('GET', $this->baseUrl . '/_test/subscription/' . $userId);
     }
 
+    /** @return list<array{action: string, payload: array<string, mixed>}> */
+    public function readEvents(): array
+    {
+        $res = $this->requestJson('GET', $this->baseUrl . '/_test/events');
+
+        return is_array($res['events'] ?? null) ? $res['events'] : [];
+    }
+
     public function stop(): void
     {
         foreach ($this->pipes as $pipe) {
